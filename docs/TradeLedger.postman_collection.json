@@ -1,0 +1,1584 @@
+{
+  "info": {
+    "_postman_id": "b7f4e2a1-3c8d-4f6b-9e21-5a0c7d8f1234",
+    "name": "TradeLedger API",
+    "description": "Personal crypto trade journal and portfolio dashboard, synced automatically from the Bitunix exchange.\n\n**Read-only against the exchange.** TradeLedger never places, modifies or cancels an order.\n\n## Quick start\n\n1. Select the **TradeLedger - Local** environment (or edit the collection variables).\n2. Run **Auth > Login**. The token is saved to `{{token}}` automatically by a test script, and every other request inherits it from collection-level Bearer auth.\n3. Run **Accounts > Create account** to get an `{{accountId}}`, then work through the other folders.\n\nRequests that create something save the new id into a collection variable (`accountId`, `tradeId`, `planId`), so the folders can be run top to bottom, or with the Collection Runner.\n\n## How a trade reaches the journal\n\nA closed Bitunix position becomes a journal row on its own. The mechanical half (prices, quantity, leverage, fees, funding, PnL) comes from the exchange; the subjective half (strategy, mental state, mistakes, rating) is supplied through `PATCH /api/trades/{id}/journal`.\n\nAll enums are sent and returned as strings, e.g. `\"side\": \"Long\"`, `\"kind\": \"ExternalWallet\"`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.variables.get('baseUrl')) {",
+          "    pm.collectionVariables.set('baseUrl', 'http://localhost:5199');",
+          "    if (pm.environment.name) { pm.environment.set('baseUrl', 'http://localhost:5199'); }",
+          "}"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('No server error', function () {",
+          "    pm.expect(pm.response.code).to.be.below(500);",
+          "});"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5199",
+      "type": "string"
+    },
+    {
+      "key": "email",
+      "value": "you@example.com",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "accountId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "tradeId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "planId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "strategyId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "mistakeId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "runSuffix",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "description": "Sign in and inspect the current user. Public signup is deliberately absent: the owner account is seeded at startup from configuration.",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Login succeeds', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set('token', body.token);",
+                  "    if (pm.environment.name) { pm.environment.set('token', body.token); }",
+                  "    console.log('Token saved, expires ' + body.expiresAt);",
+                  "",
+                  "    pm.test('Token is a JWT', function () {",
+                  "        pm.expect(body.token.split('.')).to.have.lengthOf(3);",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Returns a bearer token for every other endpoint, and saves it to `{{token}}`.\n\nUnknown email and wrong password give the same 401 on purpose, so the endpoint does not confirm which addresses exist."
+          }
+        },
+        {
+          "name": "Current user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "The signed-in user plus their journal baseline: starting balance, journal start date, default risk per trade and display time zone. Everything is stored UTC; the time zone is for display only."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Accounts",
+      "description": "Venues where value lives, and their encrypted exchange credentials.",
+      "item": [
+        {
+          "name": "List accounts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "accounts"
+              ]
+            },
+            "description": "Every venue where value lives: Bitunix futures, Bitunix spot, external wallets and purely manual venues.\n\nCredentials are never returned, only the last four characters of the API key so you can tell keys apart."
+          }
+        },
+        {
+          "name": "Create account - Bitunix futures",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Names are unique per user, so keep re-runs from colliding (409).",
+                  "pm.collectionVariables.set('runSuffix', ' ' + Date.now().toString().slice(-5));",
+                  "if (pm.environment.name) { pm.environment.set('runSuffix', ' ' + Date.now().toString().slice(-5)); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('accountId', pm.response.json().id);",
+                  "    if (pm.environment.name) { pm.environment.set('accountId', pm.response.json().id); }",
+                  "    console.log('accountId saved');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Bitunix Futures{{runSuffix}}\",\n  \"kind\": \"ExchangeFutures\",\n  \"venue\": \"Bitunix\",\n  \"syncMode\": \"Api\",\n  \"quoteAsset\": \"USDT\",\n  \"trackedFrom\": \"2023-01-05T00:00:00Z\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "accounts"
+              ]
+            },
+            "description": "Registers a venue and saves the new id to `{{accountId}}`.\n\nBitunix futures and Bitunix spot are separate accounts. `trackedFrom` is the date the backfill stops walking back to.\n\n`kind`: ExchangeFutures, ExchangeSpot, ExchangeWallet, ExternalWallet, ManualVenue.\n`venue`: Bitunix, Manual. `syncMode`: Api, Manual."
+          }
+        },
+        {
+          "name": "Create account - external wallet",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"TonKeeper Wallet{{runSuffix}}\",\n  \"kind\": \"ExternalWallet\",\n  \"venue\": \"Manual\",\n  \"syncMode\": \"Manual\",\n  \"quoteAsset\": \"USDT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "accounts"
+              ]
+            },
+            "description": "A venue no API reaches. Holdings, transfers and balance snapshots for it are recorded by hand so the equity curve stays whole."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Names are unique per user, so keep re-runs from colliding (409).",
+                  "pm.collectionVariables.set('runSuffix', ' ' + Date.now().toString().slice(-5));",
+                  "if (pm.environment.name) { pm.environment.set('runSuffix', ' ' + Date.now().toString().slice(-5)); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Attach Bitunix credentials",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiKey\": \"REPLACE_WITH_READ_ONLY_API_KEY\",\n  \"apiSecret\": \"REPLACE_WITH_API_SECRET\",\n  \"label\": \"Main read-only key\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/accounts/{{accountId}}/credentials",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "accounts",
+                "{{accountId}}",
+                "credentials"
+              ]
+            },
+            "description": "Credentials are write-only: they go in and never come back out.\n\nThe key is verified against Bitunix before it is stored, so a typo fails here rather than silently killing the sync loop later. Stored AES-GCM encrypted, with the encryption key in configuration rather than the database.\n\n**Use a read-only key.** TradeLedger never places orders."
+          }
+        },
+        {
+          "name": "Remove Bitunix credentials",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/accounts/{{accountId}}/credentials",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "accounts",
+                "{{accountId}}",
+                "credentials"
+              ]
+            },
+            "description": "Detaches the key and stops automatic syncing for this account. Trades already imported are kept."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Trades",
+      "description": "The journal itself: synced and manual trades, plus the review inbox.",
+      "item": [
+        {
+          "name": "List trades",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const items = pm.response.json().items;",
+                  "    if (items.length) {",
+                  "        pm.collectionVariables.set('tradeId', items[0].id);",
+                  "        if (pm.environment.name) { pm.environment.set('tradeId', items[0].id); }",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/trades?page=1&pageSize=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "trades"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "50",
+                  "description": "1-200, default 50"
+                },
+                {
+                  "key": "accountId",
+                  "value": "{{accountId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "symbol",
+                  "value": "BTCUSDT",
+                  "disabled": true
+                },
+                {
+                  "key": "reviewState",
+                  "value": "Unreviewed",
+                  "description": "Unreviewed | Reviewed",
+                  "disabled": true
+                },
+                {
+                  "key": "from",
+                  "value": "2024-01-01T00:00:00Z",
+                  "disabled": true
+                },
+                {
+                  "key": "to",
+                  "value": "2026-12-31T23:59:59Z",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "The journal, newest first, with paging and filters. Every query parameter is optional.\n\nSaves the first result to `{{tradeId}}`."
+          }
+        },
+        {
+          "name": "Review inbox",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/trades/inbox",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "trades",
+                "inbox"
+              ]
+            },
+            "description": "Closed trades that still need their subjective half: strategy, mental state, checklist, mistakes, rating.\n\nThis is the queue to work through after the market closes."
+          }
+        },
+        {
+          "name": "Get trade",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/trades/{{tradeId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "trades",
+                "{{tradeId}}"
+              ]
+            },
+            "description": "The complete journal row including individual fills, tagged mistakes and trackings, resolved taxonomy names, and attachments."
+          }
+        },
+        {
+          "name": "Create manual trade",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fall back to the first existing account so this request works on its own.",
+                  "if (!pm.variables.get('accountId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/accounts',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const accounts = res.json();",
+                  "            if (accounts.length) {",
+                  "                pm.collectionVariables.set('accountId', accounts[0].id);",
+                  "                if (pm.environment.name) { pm.environment.set('accountId', accounts[0].id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('tradeId', pm.response.json().id);",
+                  "    if (pm.environment.name) { pm.environment.set('tradeId', pm.response.json().id); }",
+                  "    console.log('tradeId saved');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"{{accountId}}\",\n  \"symbol\": \"AAVEUSDT\",\n  \"side\": \"Long\",\n  \"openedAt\": \"2024-06-24T15:31:00Z\",\n  \"closedAt\": \"2024-06-24T16:55:00Z\",\n  \"entryPrice\": 79.417,\n  \"exitPrice\": 92,\n  \"quantity\": 1.0217772,\n  \"leverage\": 1,\n  \"positionMargin\": 81.15,\n  \"fees\": 0.16,\n  \"funding\": 0,\n  \"stopLossPrice\": 75.5,\n  \"takeProfitPrice\": 95,\n  \"memo\": \"Spot buy, held one day\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/trades",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "trades"
+              ]
+            },
+            "description": "For venues no API reaches: external wallets, other exchanges, on-chain swaps.\n\nGross PnL is derived from the prices you enter, then net PnL, outcome, achieved R and duration are computed the same way as for a synced trade.\n\n`side`: Long, Short."
+          }
+        },
+        {
+          "name": "Journal a trade",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"strategyId\": \"{{strategyId}}\",\n  \"rating\": 4,\n  \"memo\": \"Waited for the retest instead of chasing.\",\n  \"tag\": \"clean-setup\",\n  \"postTradeTag\": \"followed-plan\",\n  \"stopLossPrice\": 75.5,\n  \"takeProfitPrice\": 95,\n  \"mistakeIds\": [\"{{mistakeId}}\"],\n  \"trackingIds\": [],\n  \"marketContext\": {\n    \"total2\": \"1.02T\",\n    \"btcDominance\": \"54.2\",\n    \"usdtDominance\": \"5.1\",\n    \"marketTrend\": \"Uptrend\",\n    \"sma\": \"Above 200\",\n    \"marketSession\": \"London\",\n    \"btcPair\": \"Strong\",\n    \"rsi\": \"58\",\n    \"volume\": \"Rising\",\n    \"candleShape\": \"Bullish engulfing\"\n  },\n  \"markReviewed\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/trades/{{tradeId}}/journal",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "trades",
+                "{{tradeId}}",
+                "journal"
+              ]
+            },
+            "description": "Supplies what the exchange cannot know. Only the fields you send are changed, so a re-sync never wipes journalling.\n\nSetting a stop loss here also recomputes achieved R, since a synced trade has no stop reported by the exchange. Pass `markReviewed` to clear it from the inbox.\n\nRun **Journal > List strategies** and **List mistakes** first to populate `{{strategyId}}` and `{{mistakeId}}`. Returns the full trade with names resolved."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const need = {",
+                  "    strategyId: 'Strategy',",
+                  "    mistakeId: 'Mistake'",
+                  "};",
+                  "",
+                  "// Fetch a taxonomy id only when the variable is not already set, so this",
+                  "// request works on its own and in any Collection Runner order.",
+                  "Object.keys(need).forEach(function (key) {",
+                  "    if (pm.variables.get(key)) { return; }",
+                  "",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/taxonomy?kind=' + need[key],",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const terms = res.json();",
+                  "            if (terms.length) {",
+                  "                pm.collectionVariables.set(key, terms[0].id);",
+                  "                if (pm.environment.name) { pm.environment.set(key, terms[0].id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete manual trade",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/trades/{{tradeId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "trades",
+                "{{tradeId}}"
+              ]
+            },
+            "description": "Manual trades only. A synced trade cannot be deleted: it would reappear on the next sync sweep, and deleting it would discard the journalling attached to it. Returns 409 if you try."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Plans",
+      "description": "Pre-trade plans and the position-size calculator.",
+      "item": [
+        {
+          "name": "Position size calculator",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"balance\": 10000,\n  \"entryPrice\": 64000,\n  \"stopLossPrice\": 63000,\n  \"riskFraction\": 0.01,\n  \"riskReward\": 3,\n  \"leverage\": 10,\n  \"averageFeeRate\": 0.0006\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/plans/calculate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "plans",
+                "calculate"
+              ]
+            },
+            "description": "The workbook Calculator sheet as an endpoint, and stateless: sizing a trade should not require committing to it.\n\nSizes the position so a stop-out loses exactly the risk budget, fees included, then reports order value, margin, take profit at the requested R multiple, and estimated profit and loss net of fees.\n\n`riskFraction` is a fraction, so 0.01 is 1% of balance. Side is inferred from where the stop sits relative to entry."
+          }
+        },
+        {
+          "name": "List plans",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/plans",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "plans"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "Active",
+                  "description": "Draft | Active | Linked | Abandoned | Expired",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Pre-trade plans, newest first, optionally filtered by status."
+          }
+        },
+        {
+          "name": "Create plan",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fall back to the first existing account so this request works on its own.",
+                  "if (!pm.variables.get('accountId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/accounts',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const accounts = res.json();",
+                  "            if (accounts.length) {",
+                  "                pm.collectionVariables.set('accountId', accounts[0].id);",
+                  "                if (pm.environment.name) { pm.environment.set('accountId', accounts[0].id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}",
+                  "",
+                  "const need = {",
+                  "    strategyId: 'Strategy',",
+                  "    mistakeId: 'Mistake'",
+                  "};",
+                  "",
+                  "// Fetch a taxonomy id only when the variable is not already set, so this",
+                  "// request works on its own and in any Collection Runner order.",
+                  "Object.keys(need).forEach(function (key) {",
+                  "    if (pm.variables.get(key)) { return; }",
+                  "",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/taxonomy?kind=' + need[key],",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const terms = res.json();",
+                  "            if (terms.length) {",
+                  "                pm.collectionVariables.set(key, terms[0].id);",
+                  "                if (pm.environment.name) { pm.environment.set(key, terms[0].id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('planId', pm.response.json().id);",
+                  "    if (pm.environment.name) { pm.environment.set('planId', pm.response.json().id); }",
+                  "    console.log('planId saved');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"{{accountId}}\",\n  \"symbol\": \"BTCUSDT\",\n  \"side\": \"Long\",\n  \"entryPrice\": 64000,\n  \"stopLossPrice\": 63000,\n  \"riskFraction\": 0.01,\n  \"riskReward\": 3,\n  \"leverage\": 10,\n  \"averageFeeRate\": 0.0006,\n  \"balance\": 10000,\n  \"strategyId\": \"{{strategyId}}\",\n  \"notes\": \"Retest of the breakout level, waiting for the 4h close.\",\n  \"marketContext\": {\n    \"marketSession\": \"London\",\n    \"rsi\": \"58\",\n    \"marketTrend\": \"Uptrend\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/plans",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "plans"
+              ]
+            },
+            "description": "Records intent before entry. Sizing is calculated and stored alongside.\n\nWhen a matching fill arrives from Bitunix the plan is linked automatically and the trade is flagged planned. Plans expire after three days by default so an untaken plan stops competing to match some later, unrelated trade in the same symbol."
+          }
+        },
+        {
+          "name": "Abandon plan",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/plans/{{planId}}/abandon",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "plans",
+                "{{planId}}",
+                "abandon"
+              ]
+            },
+            "description": "Marks a plan as not taken so it stops competing for matches. A plan already linked to a trade cannot be abandoned and returns 409."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Journal",
+      "description": "The vocabularies behind the journal form, seeded from the owner workbook with spellings preserved verbatim.",
+      "item": [
+        {
+          "name": "List all terms",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/taxonomy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "taxonomy"
+              ],
+              "query": [
+                {
+                  "key": "kind",
+                  "value": "Strategy",
+                  "description": "Strategy | MentalState | Mistake | Tracking | ChecklistItem | Timeframe | ExitType | EntryType",
+                  "disabled": true
+                },
+                {
+                  "key": "includeInactive",
+                  "value": "true",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "The pickers behind the journal form: strategies, mental states, mistakes, trackings, checklist items, timeframes, entry and exit types."
+          }
+        },
+        {
+          "name": "List strategies",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const terms = pm.response.json();",
+                  "    if (terms.length) {",
+                  "        pm.collectionVariables.set('strategyId', terms[0].id);",
+                  "        if (pm.environment.name) { pm.environment.set('strategyId', terms[0].id); }",
+                  "        console.log('strategyId saved: ' + terms[0].name);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/taxonomy?kind=Strategy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "taxonomy"
+              ],
+              "query": [
+                {
+                  "key": "kind",
+                  "value": "Strategy"
+                }
+              ]
+            },
+            "description": "Saves the first strategy to `{{strategyId}}` for the plan and journal requests.\n\nSeeded set: All, 1 Touch, 2 Touch, 3 Touch, Pre Breakout, Risky Breakout, Reaction, Fakeout, News Trading, FOMO, Pattern."
+          }
+        },
+        {
+          "name": "List mistakes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const terms = pm.response.json();",
+                  "    if (terms.length) {",
+                  "        pm.collectionVariables.set('mistakeId', terms[0].id);",
+                  "        if (pm.environment.name) { pm.environment.set('mistakeId', terms[0].id); }",
+                  "        console.log('mistakeId saved: ' + terms[0].name);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/taxonomy?kind=Mistake",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "taxonomy"
+              ],
+              "query": [
+                {
+                  "key": "kind",
+                  "value": "Mistake"
+                }
+              ]
+            },
+            "description": "Saves the first mistake to `{{mistakeId}}`.\n\nSeeded set: Fake Breakout, Others signal, Market Trend Analysis, feeling, Before Candle Close, fomo, S/R analyse, First 5min."
+          }
+        },
+        {
+          "name": "Create term",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"Strategy\",\n  \"name\": \"Range Fade{{runSuffix}}\",\n  \"sortOrder\": 20,\n  \"colorHex\": \"#4F9DDE\",\n  \"description\": \"Fade the edges of an established range.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/taxonomy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "taxonomy"
+              ]
+            },
+            "description": "Adds a strategy, mental state, mistake or any other journal term for the current user."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Names are unique per user, so keep re-runs from colliding (409).",
+                  "pm.collectionVariables.set('runSuffix', ' ' + Date.now().toString().slice(-5));",
+                  "if (pm.environment.name) { pm.environment.set('runSuffix', ' ' + Date.now().toString().slice(-5)); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Deactivate term",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/taxonomy/{{strategyId}}/deactivate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "taxonomy",
+                "{{strategyId}}",
+                "deactivate"
+              ]
+            },
+            "description": "Deactivates rather than deletes. Historical trades keep their label and the term simply stops appearing in pickers, so past analytics stay intact."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Portfolio",
+      "description": "Holdings, LP and farm positions, transfers, and manual balance snapshots: the parts of the portfolio no exchange API reports.",
+      "item": [
+        {
+          "name": "List holdings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/holdings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "holdings"
+              ],
+              "query": [
+                {
+                  "key": "includeClosed",
+                  "value": "true",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Asset positions that are not round-trips: spot bags, wallet balances, and liquidity pool or farm positions with their APR and farmed status."
+          }
+        },
+        {
+          "name": "Create holding - LP farm",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"{{accountId}}\",\n  \"kind\": \"LiquidityPool\",\n  \"asset\": \"STON-TON\",\n  \"quantity\": 0.001425409,\n  \"entryValueUsd\": 59.53,\n  \"poolName\": \"STON-TON\",\n  \"farmApr\": 185,\n  \"isFarmed\": true,\n  \"openedAt\": \"2024-06-26T00:00:00Z\",\n  \"note\": \"Farmed position\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/holdings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "holdings"
+              ]
+            },
+            "description": "For spot bags, wallet balances and LP or farm positions.\n\n`kind`: Spot, Wallet, LiquidityPool, Farm."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fall back to the first existing account so this request works on its own.",
+                  "if (!pm.variables.get('accountId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/accounts',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const accounts = res.json();",
+                  "            if (accounts.length) {",
+                  "                pm.collectionVariables.set('accountId', accounts[0].id);",
+                  "                if (pm.environment.name) { pm.environment.set('accountId', accounts[0].id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List transfers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transfers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transfers"
+              ]
+            },
+            "description": "Deposits, withdrawals and moves between accounts, with their fees."
+          }
+        },
+        {
+          "name": "Create transfer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fromAccountId\": \"{{accountId}}\",\n  \"toAccountId\": null,\n  \"direction\": \"Withdrawal\",\n  \"asset\": \"USDT\",\n  \"amount\": 1.46,\n  \"fee\": 0.29,\n  \"valueUsd\": 1.46,\n  \"writeOff\": false,\n  \"network\": \"TRC20\",\n  \"counterparty\": \"aeza.net\",\n  \"note\": \"Hosting payment\",\n  \"occurredAt\": \"2024-07-05T00:00:00Z\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/transfers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transfers"
+              ]
+            },
+            "description": "Money moving in, out or between accounts.\n\n`direction`: Deposit, Withdrawal, Internal."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fall back to the first existing account so this request works on its own.",
+                  "if (!pm.variables.get('accountId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/accounts',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const accounts = res.json();",
+                  "            if (accounts.length) {",
+                  "                pm.collectionVariables.set('accountId', accounts[0].id);",
+                  "                if (pm.environment.name) { pm.environment.set('accountId', accounts[0].id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create transfer - write-off",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fromAccountId\": \"{{accountId}}\",\n  \"direction\": \"Withdrawal\",\n  \"asset\": \"USDT\",\n  \"amount\": 10,\n  \"fee\": 0,\n  \"valueUsd\": 10,\n  \"writeOff\": true,\n  \"network\": \"TON\",\n  \"note\": \"Sent on the wrong network, funds lost\",\n  \"occurredAt\": \"2024-07-01T00:00:00Z\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/transfers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transfers"
+              ]
+            },
+            "description": "Set `writeOff` for funds that were lost rather than delivered, so the equity curve shows it honestly instead of pretending the money is still somewhere."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fall back to the first existing account so this request works on its own.",
+                  "if (!pm.variables.get('accountId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/accounts',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const accounts = res.json();",
+                  "            if (accounts.length) {",
+                  "                pm.collectionVariables.set('accountId', accounts[0].id);",
+                  "                if (pm.environment.name) { pm.environment.set('accountId', accounts[0].id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create manual balance snapshot",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountId\": \"{{accountId}}\",\n  \"asset\": \"USDT\",\n  \"walletBalance\": 1500.25,\n  \"available\": 1500.25,\n  \"unrealizedPnl\": 0,\n  \"capturedAt\": \"2026-09-06T00:00:00Z\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/snapshots",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "snapshots"
+              ]
+            },
+            "description": "An equity mark for an account with no API, read off by hand.\n\nSnapshots are the sole source of the equity curve and every drawdown number, so recording them for manual venues keeps the curve whole."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fall back to the first existing account so this request works on its own.",
+                  "if (!pm.variables.get('accountId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/accounts',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const accounts = res.json();",
+                  "            if (accounts.length) {",
+                  "                pm.collectionVariables.set('accountId', accounts[0].id);",
+                  "                if (pm.environment.name) { pm.environment.set('accountId', accounts[0].id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Analytics",
+      "description": "Performance metrics, equity curve, drawdown and breakdowns. Every endpoint takes the same optional filters.",
+      "item": [
+        {
+          "name": "Performance summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/analytics/summary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analytics",
+                "summary"
+              ],
+              "query": [
+                {
+                  "key": "accountId",
+                  "value": "{{accountId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "from",
+                  "value": "2024-01-01T00:00:00Z",
+                  "disabled": true
+                },
+                {
+                  "key": "to",
+                  "value": "2026-12-31T23:59:59Z",
+                  "disabled": true
+                },
+                {
+                  "key": "strategyId",
+                  "value": "{{strategyId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "symbol",
+                  "value": "BTCUSDT",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Win rate, gross and net PnL, fees, funding, average win and loss, profit factor, expectancy, planned versus unplanned performance, streaks and average duration.\n\nProfit factor is null rather than infinite when there are no losing trades yet."
+          }
+        },
+        {
+          "name": "Equity curve and drawdown",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/analytics/equity-curve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analytics",
+                "equity-curve"
+              ],
+              "query": [
+                {
+                  "key": "accountId",
+                  "value": "{{accountId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "from",
+                  "value": "2024-01-01T00:00:00Z",
+                  "disabled": true
+                },
+                {
+                  "key": "to",
+                  "value": "2026-12-31T23:59:59Z",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Built from balance snapshots, never from summing trades, because spot bags, LP positions and transfers do not appear there.\n\nReturns the curve plus peak equity, max drawdown with the date it happened, and current drawdown."
+          }
+        },
+        {
+          "name": "Breakdown by strategy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/analytics/breakdown/Strategy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analytics",
+                "breakdown",
+                "Strategy"
+              ]
+            },
+            "description": "Slices closed trades by one dimension.\n\nAllowed values: Strategy, Symbol, Side, Timeframe, MarketSession, EntryMentalState, ExitMentalState, DayOfWeek, HourOfDay, Planned."
+          }
+        },
+        {
+          "name": "Breakdown - planned vs unplanned",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/analytics/breakdown/Planned",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analytics",
+                "breakdown",
+                "Planned"
+              ]
+            },
+            "description": "The discipline metric: does having a plan before entry actually change the outcome?"
+          }
+        },
+        {
+          "name": "Breakdown - mental state",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/analytics/breakdown/EntryMentalState",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analytics",
+                "breakdown",
+                "EntryMentalState"
+              ]
+            },
+            "description": "Performance grouped by how the trader felt at entry."
+          }
+        },
+        {
+          "name": "Mistake costs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/analytics/mistakes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analytics",
+                "mistakes"
+              ]
+            },
+            "description": "How often each tagged mistake occurred and what it cost, ordered worst first.\n\nUses the explicitly attributed cost where one was given, otherwise the net result of the trades the mistake was tagged on."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sync",
+      "description": "Bitunix sync status, manual triggers and historical backfill. Every write is idempotent, so re-running is always safe.",
+      "item": [
+        {
+          "name": "Sync status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/sync/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "sync",
+                "status"
+              ]
+            },
+            "description": "Per account and endpoint: when it last synced, the timestamp of the newest record persisted, and whether the historical backfill has finished."
+          }
+        },
+        {
+          "name": "Recent sync runs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/sync/runs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "sync",
+                "runs"
+              ]
+            },
+            "description": "The last fifty sync attempts with records seen, records written, requests made and any error, so a silently stalled sync is visible."
+          }
+        },
+        {
+          "name": "Run sync now",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/sync/accounts/{{accountId}}/run",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "sync",
+                "accounts",
+                "{{accountId}}",
+                "run"
+              ]
+            },
+            "description": "Forces an incremental reconcile sweep for one account rather than waiting for the scheduled run.\n\nWrites are idempotent, so running this repeatedly is safe and is a no-op when nothing is new."
+          }
+        },
+        {
+          "name": "Backfill history",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/sync/accounts/{{accountId}}/backfill",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "sync",
+                "accounts",
+                "{{accountId}}",
+                "backfill"
+              ]
+            },
+            "description": "Walks Bitunix history back to the account `trackedFrom` date. Run once after attaching credentials.\n\nSafe to re-run: every write is an upsert keyed on the exchange position id."
+          }
+        },
+        {
+          "name": "Capture balance snapshot",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/sync/accounts/{{accountId}}/snapshot",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "sync",
+                "accounts",
+                "{{accountId}}",
+                "snapshot"
+              ]
+            },
+            "description": "Reads the Bitunix futures wallet and records an equity point.\n\nBonus is excluded from equity because it is not withdrawable and would inflate the curve."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Returns ok when the API is up. No authentication required."
+          }
+        }
+      ]
+    }
+  ]
+}

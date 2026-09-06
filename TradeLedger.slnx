@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TradeLedger.Api/TradeLedger.Api.csproj" />
+    <Project Path="src/TradeLedger.Core/TradeLedger.Core.csproj" />
+    <Project Path="src/TradeLedger.Worker/TradeLedger.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TradeLedger.IntegrationTests/TradeLedger.IntegrationTests.csproj" />
+    <Project Path="tests/TradeLedger.UnitTests/TradeLedger.UnitTests.csproj" />
+  </Folder>
+</Solution>
