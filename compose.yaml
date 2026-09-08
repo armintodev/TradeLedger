@@ -2,7 +2,7 @@ name: tradeledger
 
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18.4
     environment:
       POSTGRES_DB: tradeledger
       POSTGRES_USER: tradeledger
@@ -10,7 +10,8 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tradeledger -d tradeledger"]
       interval: 5s

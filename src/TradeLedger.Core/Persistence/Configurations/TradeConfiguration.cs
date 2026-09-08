@@ -9,7 +9,7 @@ public sealed class TradeConfiguration : IEntityTypeConfiguration<Trade>
 {
     public void Configure(EntityTypeBuilder<Trade> b)
     {
-        b.ToTable("trades");
+        b.ToTable("trades", schema: DatabaseConsts.CoreSchema);
         b.HasKey(t => t.Id);
 
         b.Property(t => t.Symbol).HasMaxLength(32).IsRequired();
@@ -44,19 +44,22 @@ public sealed class TradeConfiguration : IEntityTypeConfiguration<Trade>
         b.Property(t => t.TradeGainPercent).HasColumnType(Precision.Ratio);
         b.Property(t => t.AccountChangePercent).HasColumnType(Precision.Ratio);
 
-        b.OwnsOne(t => t.MarketContext, mc =>
-        {
-            mc.Property(p => p.Total2).HasColumnName("ctx_total2").HasMaxLength(64);
-            mc.Property(p => p.BtcDominance).HasColumnName("ctx_btc_dominance").HasMaxLength(64);
-            mc.Property(p => p.UsdtDominance).HasColumnName("ctx_usdt_dominance").HasMaxLength(64);
-            mc.Property(p => p.MarketTrend).HasColumnName("ctx_market_trend").HasMaxLength(64);
-            mc.Property(p => p.Sma).HasColumnName("ctx_sma").HasMaxLength(64);
-            mc.Property(p => p.MarketSession).HasColumnName("ctx_market_session").HasMaxLength(64);
-            mc.Property(p => p.BtcPair).HasColumnName("ctx_btc_pair").HasMaxLength(64);
-            mc.Property(p => p.Rsi).HasColumnName("ctx_rsi").HasMaxLength(64);
-            mc.Property(p => p.Volume).HasColumnName("ctx_volume").HasMaxLength(64);
-            mc.Property(p => p.CandleShape).HasColumnName("ctx_candle_shape").HasMaxLength(64);
-        });
+        b.OwnsOne(
+            t => t.MarketContext,
+            mc =>
+            {
+                mc.Property(p => p.Total2).HasColumnName("ctx_total2").HasMaxLength(64);
+                mc.Property(p => p.BtcDominance).HasColumnName("ctx_btc_dominance").HasMaxLength(64);
+                mc.Property(p => p.UsdtDominance).HasColumnName("ctx_usdt_dominance").HasMaxLength(64);
+                mc.Property(p => p.MarketTrend).HasColumnName("ctx_market_trend").HasMaxLength(64);
+                mc.Property(p => p.Sma).HasColumnName("ctx_sma").HasMaxLength(64);
+                mc.Property(p => p.MarketSession).HasColumnName("ctx_market_session").HasMaxLength(64);
+                mc.Property(p => p.BtcPair).HasColumnName("ctx_btc_pair").HasMaxLength(64);
+                mc.Property(p => p.Rsi).HasColumnName("ctx_rsi").HasMaxLength(64);
+                mc.Property(p => p.Volume).HasColumnName("ctx_volume").HasMaxLength(64);
+                mc.Property(p => p.CandleShape).HasColumnName("ctx_candle_shape").HasMaxLength(64);
+            }
+        );
 
         b.HasOne(t => t.Account).WithMany(a => a.Trades)
             .HasForeignKey(t => t.AccountId).OnDelete(DeleteBehavior.Cascade);
@@ -65,8 +68,10 @@ public sealed class TradeConfiguration : IEntityTypeConfiguration<Trade>
         b.HasOne(t => t.Timeframe).WithMany().HasForeignKey(t => t.TimeframeId).OnDelete(DeleteBehavior.SetNull);
         b.HasOne(t => t.EntryType).WithMany().HasForeignKey(t => t.EntryTypeId).OnDelete(DeleteBehavior.SetNull);
         b.HasOne(t => t.ExitType).WithMany().HasForeignKey(t => t.ExitTypeId).OnDelete(DeleteBehavior.SetNull);
+
         b.HasOne(t => t.EntryMentalState).WithMany()
             .HasForeignKey(t => t.EntryMentalStateId).OnDelete(DeleteBehavior.SetNull);
+
         b.HasOne(t => t.ExitMentalState).WithMany()
             .HasForeignKey(t => t.ExitMentalStateId).OnDelete(DeleteBehavior.SetNull);
 

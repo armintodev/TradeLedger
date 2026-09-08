@@ -1,4 +1,8 @@
 <Solution>
+  <Folder Name="/conf/">
+    <File Path="compose.yaml" />
+    <File Path="Directory.Build.props" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/TradeLedger.Api/TradeLedger.Api.csproj" />
     <Project Path="src/TradeLedger.Core/TradeLedger.Core.csproj" />

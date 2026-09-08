@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -7,13 +7,38 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace TradeLedger.Core.Persistence.Migrations;
 
 /// <inheritdoc />
-public partial class InitialSchema : Migration
+public partial class Initial : Migration
 {
     /// <inheritdoc />
     protected override void Up(MigrationBuilder migrationBuilder)
     {
+        migrationBuilder.EnsureSchema(
+            name: "core");
+
+        migrationBuilder.EnsureSchema(
+            name: "identities");
+
         migrationBuilder.CreateTable(
-            name: "AspNetRoles",
+            name: "raw_exchange_payloads",
+            schema: "core",
+            columns: table => new
+            {
+                id = table.Column<Guid>(type: "uuid", nullable: false),
+                user_id = table.Column<Guid>(type: "uuid", nullable: false),
+                account_id = table.Column<Guid>(type: "uuid", nullable: false),
+                endpoint = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false),
+                external_id = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
+                payload = table.Column<string>(type: "jsonb", nullable: false),
+                fetched_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
+            },
+            constraints: table =>
+            {
+                table.PrimaryKey("pk_raw_exchange_payloads", x => x.id);
+            });
+
+        migrationBuilder.CreateTable(
+            name: "roles",
+            schema: "identities",
             columns: table => new
             {
                 id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -23,11 +48,32 @@ public partial class InitialSchema : Migration
             },
             constraints: table =>
             {
-                table.PrimaryKey("pk_asp_net_roles", x => x.id);
+                table.PrimaryKey("pk_roles", x => x.id);
             });
 
         migrationBuilder.CreateTable(
-            name: "AspNetUsers",
+            name: "taxonomy_terms",
+            schema: "core",
+            columns: table => new
+            {
+                id = table.Column<Guid>(type: "uuid", nullable: false),
+                user_id = table.Column<Guid>(type: "uuid", nullable: false),
+                kind = table.Column<string>(type: "text", nullable: false),
+                name = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false),
+                sort_order = table.Column<int>(type: "integer", nullable: false),
+                is_active = table.Column<bool>(type: "boolean", nullable: false),
+                color_hex = table.Column<string>(type: "character varying(9)", maxLength: 9, nullable: true),
+                description = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
+                created_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
+            },
+            constraints: table =>
+            {
+                table.PrimaryKey("pk_taxonomy_terms", x => x.id);
+            });
+
+        migrationBuilder.CreateTable(
+            name: "users",
+            schema: "identities",
             columns: table => new
             {
                 id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -54,43 +100,7 @@ public partial class InitialSchema : Migration
             },
             constraints: table =>
             {
-                table.PrimaryKey("pk_asp_net_users", x => x.id);
-            });
-
-        migrationBuilder.CreateTable(
-            name: "raw_exchange_payloads",
-            columns: table => new
-            {
-                id = table.Column<Guid>(type: "uuid", nullable: false),
-                user_id = table.Column<Guid>(type: "uuid", nullable: false),
-                account_id = table.Column<Guid>(type: "uuid", nullable: false),
-                endpoint = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false),
-                external_id = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
-                payload = table.Column<string>(type: "jsonb", nullable: false),
-                fetched_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
-            },
-            constraints: table =>
-            {
-                table.PrimaryKey("pk_raw_exchange_payloads", x => x.id);
-            });
-
-        migrationBuilder.CreateTable(
-            name: "taxonomy_terms",
-            columns: table => new
-            {
-                id = table.Column<Guid>(type: "uuid", nullable: false),
-                user_id = table.Column<Guid>(type: "uuid", nullable: false),
-                kind = table.Column<string>(type: "text", nullable: false),
-                name = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false),
-                sort_order = table.Column<int>(type: "integer", nullable: false),
-                is_active = table.Column<bool>(type: "boolean", nullable: false),
-                color_hex = table.Column<string>(type: "character varying(9)", maxLength: 9, nullable: true),
-                description = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
-                created_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
-            },
-            constraints: table =>
-            {
-                table.PrimaryKey("pk_taxonomy_terms", x => x.id);
+                table.PrimaryKey("pk_users", x => x.id);
             });
 
         migrationBuilder.CreateTable(
@@ -109,7 +119,8 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_asp_net_role_claims_asp_net_roles_role_id",
                     column: x => x.role_id,
-                    principalTable: "AspNetRoles",
+                    principalSchema: "identities",
+                    principalTable: "roles",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
             });
@@ -130,7 +141,8 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_asp_net_user_claims_asp_net_users_user_id",
                     column: x => x.user_id,
-                    principalTable: "AspNetUsers",
+                    principalSchema: "identities",
+                    principalTable: "users",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
             });
@@ -150,7 +162,8 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_asp_net_user_logins_asp_net_users_user_id",
                     column: x => x.user_id,
-                    principalTable: "AspNetUsers",
+                    principalSchema: "identities",
+                    principalTable: "users",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
             });
@@ -168,13 +181,15 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_asp_net_user_roles_asp_net_roles_role_id",
                     column: x => x.role_id,
-                    principalTable: "AspNetRoles",
+                    principalSchema: "identities",
+                    principalTable: "roles",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
                 table.ForeignKey(
                     name: "fk_asp_net_user_roles_asp_net_users_user_id",
                     column: x => x.user_id,
-                    principalTable: "AspNetUsers",
+                    principalSchema: "identities",
+                    principalTable: "users",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
             });
@@ -194,13 +209,15 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_asp_net_user_tokens_asp_net_users_user_id",
                     column: x => x.user_id,
-                    principalTable: "AspNetUsers",
+                    principalSchema: "identities",
+                    principalTable: "users",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
             });
 
         migrationBuilder.CreateTable(
             name: "accounts",
+            schema: "core",
             columns: table => new
             {
                 id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -220,13 +237,15 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_accounts_users_user_id",
                     column: x => x.user_id,
-                    principalTable: "AspNetUsers",
+                    principalSchema: "identities",
+                    principalTable: "users",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
             });
 
         migrationBuilder.CreateTable(
             name: "balance_snapshots",
+            schema: "core",
             columns: table => new
             {
                 id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -249,6 +268,7 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_balance_snapshots_accounts_account_id",
                     column: x => x.account_id,
+                    principalSchema: "core",
                     principalTable: "accounts",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
@@ -256,6 +276,7 @@ public partial class InitialSchema : Migration
 
         migrationBuilder.CreateTable(
             name: "exchange_credentials",
+            schema: "core",
             columns: table => new
             {
                 id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -277,6 +298,7 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_exchange_credentials_accounts_account_id",
                     column: x => x.account_id,
+                    principalSchema: "core",
                     principalTable: "accounts",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
@@ -284,6 +306,7 @@ public partial class InitialSchema : Migration
 
         migrationBuilder.CreateTable(
             name: "holdings",
+            schema: "core",
             columns: table => new
             {
                 id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -311,6 +334,7 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_holdings_accounts_account_id",
                     column: x => x.account_id,
+                    principalSchema: "core",
                     principalTable: "accounts",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
@@ -318,6 +342,7 @@ public partial class InitialSchema : Migration
 
         migrationBuilder.CreateTable(
             name: "sync_cursors",
+            schema: "core",
             columns: table => new
             {
                 id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -336,6 +361,7 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_sync_cursors_accounts_account_id",
                     column: x => x.account_id,
+                    principalSchema: "core",
                     principalTable: "accounts",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
@@ -343,6 +369,7 @@ public partial class InitialSchema : Migration
 
         migrationBuilder.CreateTable(
             name: "sync_runs",
+            schema: "core",
             columns: table => new
             {
                 id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -364,6 +391,7 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_sync_runs_accounts_account_id",
                     column: x => x.account_id,
+                    principalSchema: "core",
                     principalTable: "accounts",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
@@ -371,6 +399,7 @@ public partial class InitialSchema : Migration
 
         migrationBuilder.CreateTable(
             name: "trade_plans",
+            schema: "core",
             columns: table => new
             {
                 id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -416,24 +445,28 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_trade_plans_accounts_account_id",
                     column: x => x.account_id,
+                    principalSchema: "core",
                     principalTable: "accounts",
                     principalColumn: "id",
                     onDelete: ReferentialAction.SetNull);
                 table.ForeignKey(
                     name: "fk_trade_plans_taxonomy_terms_entry_mental_state_id",
                     column: x => x.entry_mental_state_id,
+                    principalSchema: "core",
                     principalTable: "taxonomy_terms",
                     principalColumn: "id",
                     onDelete: ReferentialAction.SetNull);
                 table.ForeignKey(
                     name: "fk_trade_plans_taxonomy_terms_strategy_id",
                     column: x => x.strategy_id,
+                    principalSchema: "core",
                     principalTable: "taxonomy_terms",
                     principalColumn: "id",
                     onDelete: ReferentialAction.SetNull);
                 table.ForeignKey(
                     name: "fk_trade_plans_taxonomy_terms_timeframe_id",
                     column: x => x.timeframe_id,
+                    principalSchema: "core",
                     principalTable: "taxonomy_terms",
                     principalColumn: "id",
                     onDelete: ReferentialAction.SetNull);
@@ -441,6 +474,7 @@ public partial class InitialSchema : Migration
 
         migrationBuilder.CreateTable(
             name: "transfers",
+            schema: "core",
             columns: table => new
             {
                 id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -466,12 +500,14 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_transfers_accounts_from_account_id",
                     column: x => x.from_account_id,
+                    principalSchema: "core",
                     principalTable: "accounts",
                     principalColumn: "id",
                     onDelete: ReferentialAction.SetNull);
                 table.ForeignKey(
                     name: "fk_transfers_accounts_to_account_id",
                     column: x => x.to_account_id,
+                    principalSchema: "core",
                     principalTable: "accounts",
                     principalColumn: "id",
                     onDelete: ReferentialAction.SetNull);
@@ -479,6 +515,7 @@ public partial class InitialSchema : Migration
 
         migrationBuilder.CreateTable(
             name: "trades",
+            schema: "core",
             columns: table => new
             {
                 id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -552,48 +589,56 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_trades_accounts_account_id",
                     column: x => x.account_id,
+                    principalSchema: "core",
                     principalTable: "accounts",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
                 table.ForeignKey(
                     name: "fk_trades_taxonomy_terms_entry_mental_state_id",
                     column: x => x.entry_mental_state_id,
+                    principalSchema: "core",
                     principalTable: "taxonomy_terms",
                     principalColumn: "id",
                     onDelete: ReferentialAction.SetNull);
                 table.ForeignKey(
                     name: "fk_trades_taxonomy_terms_entry_type_id",
                     column: x => x.entry_type_id,
+                    principalSchema: "core",
                     principalTable: "taxonomy_terms",
                     principalColumn: "id",
                     onDelete: ReferentialAction.SetNull);
                 table.ForeignKey(
                     name: "fk_trades_taxonomy_terms_exit_mental_state_id",
                     column: x => x.exit_mental_state_id,
+                    principalSchema: "core",
                     principalTable: "taxonomy_terms",
                     principalColumn: "id",
                     onDelete: ReferentialAction.SetNull);
                 table.ForeignKey(
                     name: "fk_trades_taxonomy_terms_exit_type_id",
                     column: x => x.exit_type_id,
+                    principalSchema: "core",
                     principalTable: "taxonomy_terms",
                     principalColumn: "id",
                     onDelete: ReferentialAction.SetNull);
                 table.ForeignKey(
                     name: "fk_trades_taxonomy_terms_strategy_id",
                     column: x => x.strategy_id,
+                    principalSchema: "core",
                     principalTable: "taxonomy_terms",
                     principalColumn: "id",
                     onDelete: ReferentialAction.SetNull);
                 table.ForeignKey(
                     name: "fk_trades_taxonomy_terms_timeframe_id",
                     column: x => x.timeframe_id,
+                    principalSchema: "core",
                     principalTable: "taxonomy_terms",
                     principalColumn: "id",
                     onDelete: ReferentialAction.SetNull);
                 table.ForeignKey(
                     name: "fk_trades_trade_plans_trade_plan_id",
                     column: x => x.trade_plan_id,
+                    principalSchema: "core",
                     principalTable: "trade_plans",
                     principalColumn: "id",
                     onDelete: ReferentialAction.SetNull);
@@ -601,6 +646,7 @@ public partial class InitialSchema : Migration
 
         migrationBuilder.CreateTable(
             name: "attachments",
+            schema: "core",
             columns: table => new
             {
                 id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -621,12 +667,14 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_attachments_trades_trade_id",
                     column: x => x.trade_id,
+                    principalSchema: "core",
                     principalTable: "trades",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
                 table.ForeignKey(
                     name: "fk_attachments_transfers_transfer_id",
                     column: x => x.transfer_id,
+                    principalSchema: "core",
                     principalTable: "transfers",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
@@ -634,6 +682,7 @@ public partial class InitialSchema : Migration
 
         migrationBuilder.CreateTable(
             name: "executions",
+            schema: "core",
             columns: table => new
             {
                 id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -660,6 +709,7 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_executions_trades_trade_id",
                     column: x => x.trade_id,
+                    principalSchema: "core",
                     principalTable: "trades",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
@@ -667,6 +717,7 @@ public partial class InitialSchema : Migration
 
         migrationBuilder.CreateTable(
             name: "funding_payments",
+            schema: "core",
             columns: table => new
             {
                 id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -687,12 +738,14 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_funding_payments_accounts_account_id",
                     column: x => x.account_id,
+                    principalSchema: "core",
                     principalTable: "accounts",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
                 table.ForeignKey(
                     name: "fk_funding_payments_trades_trade_id",
                     column: x => x.trade_id,
+                    principalSchema: "core",
                     principalTable: "trades",
                     principalColumn: "id",
                     onDelete: ReferentialAction.SetNull);
@@ -700,6 +753,7 @@ public partial class InitialSchema : Migration
 
         migrationBuilder.CreateTable(
             name: "trade_mistakes",
+            schema: "core",
             columns: table => new
             {
                 trade_id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -714,12 +768,14 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_trade_mistakes_taxonomy_terms_taxonomy_term_id",
                     column: x => x.taxonomy_term_id,
+                    principalSchema: "core",
                     principalTable: "taxonomy_terms",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
                 table.ForeignKey(
                     name: "fk_trade_mistakes_trades_trade_id",
                     column: x => x.trade_id,
+                    principalSchema: "core",
                     principalTable: "trades",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
@@ -727,6 +783,7 @@ public partial class InitialSchema : Migration
 
         migrationBuilder.CreateTable(
             name: "trade_trackings",
+            schema: "core",
             columns: table => new
             {
                 trade_id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -740,12 +797,14 @@ public partial class InitialSchema : Migration
                 table.ForeignKey(
                     name: "fk_trade_trackings_taxonomy_terms_taxonomy_term_id",
                     column: x => x.taxonomy_term_id,
+                    principalSchema: "core",
                     principalTable: "taxonomy_terms",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
                 table.ForeignKey(
                     name: "fk_trade_trackings_trades_trade_id",
                     column: x => x.trade_id,
+                    principalSchema: "core",
                     principalTable: "trades",
                     principalColumn: "id",
                     onDelete: ReferentialAction.Cascade);
@@ -755,12 +814,6 @@ public partial class InitialSchema : Migration
             name: "ix_asp_net_role_claims_role_id",
             table: "AspNetRoleClaims",
             column: "role_id");
-
-        migrationBuilder.CreateIndex(
-            name: "RoleNameIndex",
-            table: "AspNetRoles",
-            column: "normalized_name",
-            unique: true);
 
         migrationBuilder.CreateIndex(
             name: "ix_asp_net_user_claims_user_id",
@@ -778,52 +831,48 @@ public partial class InitialSchema : Migration
             column: "role_id");
 
         migrationBuilder.CreateIndex(
-            name: "EmailIndex",
-            table: "AspNetUsers",
-            column: "normalized_email");
-
-        migrationBuilder.CreateIndex(
-            name: "UserNameIndex",
-            table: "AspNetUsers",
-            column: "normalized_user_name",
-            unique: true);
-
-        migrationBuilder.CreateIndex(
             name: "ix_accounts_user_id_name",
+            schema: "core",
             table: "accounts",
             columns: new[] { "user_id", "name" },
             unique: true);
 
         migrationBuilder.CreateIndex(
             name: "ix_attachments_trade_id",
+            schema: "core",
             table: "attachments",
             column: "trade_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_attachments_transfer_id",
+            schema: "core",
             table: "attachments",
             column: "transfer_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_balance_snapshots_account_id_captured_at",
+            schema: "core",
             table: "balance_snapshots",
             columns: new[] { "account_id", "captured_at" },
             descending: new[] { false, true });
 
         migrationBuilder.CreateIndex(
             name: "ix_balance_snapshots_user_id_captured_at",
+            schema: "core",
             table: "balance_snapshots",
             columns: new[] { "user_id", "captured_at" },
             descending: new[] { false, true });
 
         migrationBuilder.CreateIndex(
             name: "ix_exchange_credentials_account_id",
+            schema: "core",
             table: "exchange_credentials",
             column: "account_id",
             unique: true);
 
         migrationBuilder.CreateIndex(
             name: "ix_executions_account_id_exchange_trade_id",
+            schema: "core",
             table: "executions",
             columns: new[] { "account_id", "exchange_trade_id" },
             unique: true,
@@ -831,11 +880,13 @@ public partial class InitialSchema : Migration
 
         migrationBuilder.CreateIndex(
             name: "ix_executions_trade_id_executed_at",
+            schema: "core",
             table: "executions",
             columns: new[] { "trade_id", "executed_at" });
 
         migrationBuilder.CreateIndex(
             name: "ix_funding_payments_account_id_exchange_funding_id",
+            schema: "core",
             table: "funding_payments",
             columns: new[] { "account_id", "exchange_funding_id" },
             unique: true,
@@ -843,80 +894,102 @@ public partial class InitialSchema : Migration
 
         migrationBuilder.CreateIndex(
             name: "ix_funding_payments_trade_id",
+            schema: "core",
             table: "funding_payments",
             column: "trade_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_holdings_account_id",
+            schema: "core",
             table: "holdings",
             column: "account_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_holdings_user_id_kind_asset",
+            schema: "core",
             table: "holdings",
             columns: new[] { "user_id", "kind", "asset" });
 
         migrationBuilder.CreateIndex(
             name: "ix_raw_exchange_payloads_account_id_endpoint_external_id",
+            schema: "core",
             table: "raw_exchange_payloads",
             columns: new[] { "account_id", "endpoint", "external_id" },
             unique: true);
 
         migrationBuilder.CreateIndex(
+            name: "RoleNameIndex",
+            schema: "identities",
+            table: "roles",
+            column: "normalized_name",
+            unique: true);
+
+        migrationBuilder.CreateIndex(
             name: "ix_sync_cursors_account_id_endpoint",
+            schema: "core",
             table: "sync_cursors",
             columns: new[] { "account_id", "endpoint" },
             unique: true);
 
         migrationBuilder.CreateIndex(
             name: "ix_sync_runs_account_id_started_at",
+            schema: "core",
             table: "sync_runs",
             columns: new[] { "account_id", "started_at" },
             descending: new[] { false, true });
 
         migrationBuilder.CreateIndex(
             name: "ix_taxonomy_terms_user_id_kind_name",
+            schema: "core",
             table: "taxonomy_terms",
             columns: new[] { "user_id", "kind", "name" },
             unique: true);
 
         migrationBuilder.CreateIndex(
             name: "ix_trade_mistakes_taxonomy_term_id",
+            schema: "core",
             table: "trade_mistakes",
             column: "taxonomy_term_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_trade_plans_account_id",
+            schema: "core",
             table: "trade_plans",
             column: "account_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_trade_plans_entry_mental_state_id",
+            schema: "core",
             table: "trade_plans",
             column: "entry_mental_state_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_trade_plans_strategy_id",
+            schema: "core",
             table: "trade_plans",
             column: "strategy_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_trade_plans_timeframe_id",
+            schema: "core",
             table: "trade_plans",
             column: "timeframe_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_trade_plans_user_id_status_symbol",
+            schema: "core",
             table: "trade_plans",
             columns: new[] { "user_id", "status", "symbol" });
 
         migrationBuilder.CreateIndex(
             name: "ix_trade_trackings_taxonomy_term_id",
+            schema: "core",
             table: "trade_trackings",
             column: "taxonomy_term_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_trades_account_id_exchange_position_id",
+            schema: "core",
             table: "trades",
             columns: new[] { "account_id", "exchange_position_id" },
             unique: true,
@@ -924,76 +997,103 @@ public partial class InitialSchema : Migration
 
         migrationBuilder.CreateIndex(
             name: "ix_trades_entry_mental_state_id",
+            schema: "core",
             table: "trades",
             column: "entry_mental_state_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_trades_entry_type_id",
+            schema: "core",
             table: "trades",
             column: "entry_type_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_trades_exit_mental_state_id",
+            schema: "core",
             table: "trades",
             column: "exit_mental_state_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_trades_exit_type_id",
+            schema: "core",
             table: "trades",
             column: "exit_type_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_trades_strategy_id",
+            schema: "core",
             table: "trades",
             column: "strategy_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_trades_timeframe_id",
+            schema: "core",
             table: "trades",
             column: "timeframe_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_trades_trade_plan_id",
+            schema: "core",
             table: "trades",
             column: "trade_plan_id",
             unique: true);
 
         migrationBuilder.CreateIndex(
             name: "ix_trades_user_id_opened_at",
+            schema: "core",
             table: "trades",
             columns: new[] { "user_id", "opened_at" },
             descending: new[] { false, true });
 
         migrationBuilder.CreateIndex(
             name: "ix_trades_user_id_review_state",
+            schema: "core",
             table: "trades",
             columns: new[] { "user_id", "review_state" });
 
         migrationBuilder.CreateIndex(
             name: "ix_trades_user_id_strategy_id",
+            schema: "core",
             table: "trades",
             columns: new[] { "user_id", "strategy_id" });
 
         migrationBuilder.CreateIndex(
             name: "ix_trades_user_id_symbol",
+            schema: "core",
             table: "trades",
             columns: new[] { "user_id", "symbol" });
 
         migrationBuilder.CreateIndex(
             name: "ix_transfers_from_account_id",
+            schema: "core",
             table: "transfers",
             column: "from_account_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_transfers_to_account_id",
+            schema: "core",
             table: "transfers",
             column: "to_account_id");
 
         migrationBuilder.CreateIndex(
             name: "ix_transfers_user_id_occurred_at",
+            schema: "core",
             table: "transfers",
             columns: new[] { "user_id", "occurred_at" },
             descending: new[] { false, true });
+
+        migrationBuilder.CreateIndex(
+            name: "EmailIndex",
+            schema: "identities",
+            table: "users",
+            column: "normalized_email");
+
+        migrationBuilder.CreateIndex(
+            name: "UserNameIndex",
+            schema: "identities",
+            table: "users",
+            column: "normalized_user_name",
+            unique: true);
     }
 
     /// <inheritdoc />
@@ -1015,57 +1115,75 @@ public partial class InitialSchema : Migration
             name: "AspNetUserTokens");
 
         migrationBuilder.DropTable(
-            name: "attachments");
+            name: "attachments",
+            schema: "core");
 
         migrationBuilder.DropTable(
-            name: "balance_snapshots");
+            name: "balance_snapshots",
+            schema: "core");
 
         migrationBuilder.DropTable(
-            name: "exchange_credentials");
+            name: "exchange_credentials",
+            schema: "core");
 
         migrationBuilder.DropTable(
-            name: "executions");
+            name: "executions",
+            schema: "core");
 
         migrationBuilder.DropTable(
-            name: "funding_payments");
+            name: "funding_payments",
+            schema: "core");
 
         migrationBuilder.DropTable(
-            name: "holdings");
+            name: "holdings",
+            schema: "core");
 
         migrationBuilder.DropTable(
-            name: "raw_exchange_payloads");
+            name: "raw_exchange_payloads",
+            schema: "core");
 
         migrationBuilder.DropTable(
-            name: "sync_cursors");
+            name: "sync_cursors",
+            schema: "core");
 
         migrationBuilder.DropTable(
-            name: "sync_runs");
+            name: "sync_runs",
+            schema: "core");
 
         migrationBuilder.DropTable(
-            name: "trade_mistakes");
+            name: "trade_mistakes",
+            schema: "core");
 
         migrationBuilder.DropTable(
-            name: "trade_trackings");
+            name: "trade_trackings",
+            schema: "core");
 
         migrationBuilder.DropTable(
-            name: "AspNetRoles");
+            name: "roles",
+            schema: "identities");
 
         migrationBuilder.DropTable(
-            name: "transfers");
+            name: "transfers",
+            schema: "core");
 
         migrationBuilder.DropTable(
-            name: "trades");
+            name: "trades",
+            schema: "core");
 
         migrationBuilder.DropTable(
-            name: "trade_plans");
+            name: "trade_plans",
+            schema: "core");
 
         migrationBuilder.DropTable(
-            name: "accounts");
+            name: "accounts",
+            schema: "core");
 
         migrationBuilder.DropTable(
-            name: "taxonomy_terms");
+            name: "taxonomy_terms",
+            schema: "core");
 
         migrationBuilder.DropTable(
-            name: "AspNetUsers");
+            name: "users",
+            schema: "identities");
     }
 }

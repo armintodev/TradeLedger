@@ -9,7 +9,7 @@ public sealed class FundingPaymentConfiguration : IEntityTypeConfiguration<Fundi
 {
     public void Configure(EntityTypeBuilder<FundingPayment> b)
     {
-        b.ToTable("funding_payments");
+        b.ToTable("funding_payments", schema: DatabaseConsts.CoreSchema);
         b.HasKey(f => f.Id);
 
         b.Property(f => f.Symbol).HasMaxLength(32).IsRequired();
@@ -20,6 +20,7 @@ public sealed class FundingPaymentConfiguration : IEntityTypeConfiguration<Fundi
 
         b.HasOne(f => f.Account).WithMany()
             .HasForeignKey(f => f.AccountId).OnDelete(DeleteBehavior.Cascade);
+
         b.HasOne(f => f.Trade).WithMany(t => t.FundingPayments)
             .HasForeignKey(f => f.TradeId).OnDelete(DeleteBehavior.SetNull);
 
@@ -33,7 +34,7 @@ public sealed class TransferConfiguration : IEntityTypeConfiguration<Transfer>
 {
     public void Configure(EntityTypeBuilder<Transfer> b)
     {
-        b.ToTable("transfers");
+        b.ToTable("transfers", schema: DatabaseConsts.CoreSchema);
         b.HasKey(t => t.Id);
 
         b.Property(t => t.Asset).HasMaxLength(32).IsRequired();
@@ -48,6 +49,7 @@ public sealed class TransferConfiguration : IEntityTypeConfiguration<Transfer>
 
         b.HasOne(t => t.FromAccount).WithMany()
             .HasForeignKey(t => t.FromAccountId).OnDelete(DeleteBehavior.SetNull);
+
         b.HasOne(t => t.ToAccount).WithMany()
             .HasForeignKey(t => t.ToAccountId).OnDelete(DeleteBehavior.SetNull);
 
@@ -59,7 +61,7 @@ public sealed class HoldingConfiguration : IEntityTypeConfiguration<Holding>
 {
     public void Configure(EntityTypeBuilder<Holding> b)
     {
-        b.ToTable("holdings");
+        b.ToTable("holdings", schema: DatabaseConsts.CoreSchema);
         b.HasKey(h => h.Id);
 
         b.Property(h => h.Asset).HasMaxLength(64).IsRequired();
@@ -84,7 +86,7 @@ public sealed class BalanceSnapshotConfiguration : IEntityTypeConfiguration<Bala
 {
     public void Configure(EntityTypeBuilder<BalanceSnapshot> b)
     {
-        b.ToTable("balance_snapshots");
+        b.ToTable("balance_snapshots", schema: DatabaseConsts.CoreSchema);
         b.HasKey(s => s.Id);
 
         b.Property(s => s.Asset).HasMaxLength(16);
@@ -108,7 +110,7 @@ public sealed class AttachmentConfiguration : IEntityTypeConfiguration<Attachmen
 {
     public void Configure(EntityTypeBuilder<Attachment> b)
     {
-        b.ToTable("attachments");
+        b.ToTable("attachments", schema: DatabaseConsts.CoreSchema);
         b.HasKey(a => a.Id);
 
         b.Property(a => a.Slot).HasMaxLength(32).IsRequired();
@@ -119,6 +121,7 @@ public sealed class AttachmentConfiguration : IEntityTypeConfiguration<Attachmen
 
         b.HasOne(a => a.Trade).WithMany(t => t.Attachments)
             .HasForeignKey(a => a.TradeId).OnDelete(DeleteBehavior.Cascade);
+
         b.HasOne(a => a.Transfer).WithMany(t => t.Attachments)
             .HasForeignKey(a => a.TransferId).OnDelete(DeleteBehavior.Cascade);
     }
@@ -128,7 +131,7 @@ public sealed class SyncCursorConfiguration : IEntityTypeConfiguration<SyncCurso
 {
     public void Configure(EntityTypeBuilder<SyncCursor> b)
     {
-        b.ToTable("sync_cursors");
+        b.ToTable("sync_cursors", schema: DatabaseConsts.CoreSchema);
         b.HasKey(c => c.Id);
         b.Property(c => c.Endpoint).HasMaxLength(128).IsRequired();
         b.Property(c => c.LastRecordId).HasMaxLength(64);
@@ -144,7 +147,7 @@ public sealed class SyncRunConfiguration : IEntityTypeConfiguration<SyncRun>
 {
     public void Configure(EntityTypeBuilder<SyncRun> b)
     {
-        b.ToTable("sync_runs");
+        b.ToTable("sync_runs", schema: DatabaseConsts.CoreSchema);
         b.HasKey(r => r.Id);
         b.Property(r => r.Endpoint).HasMaxLength(128).IsRequired();
         b.Property(r => r.Error).HasMaxLength(4000);
@@ -160,7 +163,7 @@ public sealed class RawExchangePayloadConfiguration : IEntityTypeConfiguration<R
 {
     public void Configure(EntityTypeBuilder<RawExchangePayload> b)
     {
-        b.ToTable("raw_exchange_payloads");
+        b.ToTable("raw_exchange_payloads", schema: DatabaseConsts.CoreSchema);
         b.HasKey(p => p.Id);
 
         b.Property(p => p.Endpoint).HasMaxLength(128).IsRequired();

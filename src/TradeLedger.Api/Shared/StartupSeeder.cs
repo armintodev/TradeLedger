@@ -37,6 +37,7 @@ public static class StartupSeeder
         if (string.IsNullOrWhiteSpace(options.OwnerEmail))
         {
             logger.LogInformation("Seed:OwnerEmail not configured; skipping owner seed.");
+
             return;
         }
 
@@ -48,7 +49,9 @@ public static class StartupSeeder
             {
                 logger.LogWarning(
                     "Seed:OwnerEmail is set but Seed:OwnerPassword is not. " +
-                    "Set it via user-secrets to create the owner account.");
+                    "Set it via user-secrets to create the owner account."
+                );
+
                 return;
             }
 
@@ -64,11 +67,14 @@ public static class StartupSeeder
             };
 
             var result = await users.CreateAsync(user, options.OwnerPassword);
+
             if (!result.Succeeded)
             {
                 logger.LogError(
                     "Could not create owner account: {Errors}",
-                    string.Join("; ", result.Errors.Select(e => e.Description)));
+                    string.Join("; ", result.Errors.Select(e => e.Description))
+                );
+
                 return;
             }
 
@@ -76,6 +82,7 @@ public static class StartupSeeder
         }
 
         db.BypassUserFilter = true;
+
         try
         {
             await TaxonomySeeder.SeedAsync(db, user.Id, ct);

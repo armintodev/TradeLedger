@@ -2,13 +2,15 @@ using System.Linq.Expressions;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using TradeLedger.Core.Domain;
+using TradeLedger.Core.Extensions;
 using TradeLedger.Core.Shared;
 
 namespace TradeLedger.Core.Persistence;
 
 public sealed class TradeLedgerDbContext(
     DbContextOptions<TradeLedgerDbContext> options,
-    IUserContext userContext)
+    IUserContext userContext
+)
     : IdentityDbContext<AppUser, AppRole, Guid>(options)
 {
     public DbSet<Account> Accounts => Set<Account>();
@@ -49,11 +51,13 @@ public sealed class TradeLedgerDbContext(
 
             var currentUserId = Expression.Convert(
                 Expression.Property(Expression.Constant(this), nameof(CurrentUserId)),
-                typeof(Guid?));
+                typeof(Guid?)
+            );
 
             var matchesTenant = Expression.Equal(
                 Expression.Convert(userIdProperty, typeof(Guid?)),
-                currentUserId);
+                currentUserId
+            );
 
             var bypass = Expression.Property(Expression.Constant(this), nameof(BypassUserFilter));
 
@@ -66,23 +70,28 @@ public sealed class TradeLedgerDbContext(
             foreach (var property in entity.GetProperties())
             {
                 var type = Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType;
+
                 if (type.IsEnum)
                 {
                     property.SetProviderClrType(typeof(string));
                 }
             }
         }
+
+        builder.RenameIdentityTableName();
     }
 
     public override int SaveChanges()
     {
         StampUserIds();
+
         return base.SaveChanges();
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         StampUserIds();
+
         return base.SaveChangesAsync(cancellationToken);
     }
 

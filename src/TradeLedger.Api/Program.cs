@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
+using Swashbuckle.AspNetCore.SwaggerUI;
 using TradeLedger.Api.Features.Accounts;
 using TradeLedger.Api.Features.Analytics;
 using TradeLedger.Api.Features.Auth;
@@ -35,10 +36,16 @@ builder.Services.AddTradeLedgerCore(builder.Configuration);
 
 builder.Services
     .AddIdentityCore<AppUser>(options =>
-    {
-        options.User.RequireUniqueEmail = true;
-        options.Password.RequiredLength = 12;
-    })
+        {
+            options.User.RequireUniqueEmail = true;
+            options.Password.RequiredLength = 8;
+            options.Password.RequiredUniqueChars = 0;
+            options.Password.RequireDigit = false;
+            options.Password.RequireNonAlphanumeric = false;
+            options.Password.RequireUppercase = false;
+            options.Password.RequireLowercase = false;
+        }
+    )
     .AddRoles<AppRole>()
     .AddEntityFrameworkStores<TradeLedgerDbContext>()
     .AddDefaultTokenProviders();
@@ -48,86 +55,100 @@ var jwt = builder.Configuration.GetSection(JwtOptions.SectionName).Get<JwtOption
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
-    {
-        options.TokenValidationParameters = new TokenValidationParameters
         {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = jwt.Issuer,
-            ValidAudience = jwt.Audience,
-            IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(jwt.SigningKey ?? new string('0', 32))),
-            ClockSkew = TimeSpan.FromMinutes(1),
-        };
-    });
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidateAudience = true,
+                ValidateLifetime = true,
+                ValidateIssuerSigningKey = true,
+                ValidIssuer = jwt.Issuer,
+                ValidAudience = jwt.Audience,
+                IssuerSigningKey = new SymmetricSecurityKey(
+                    Encoding.UTF8.GetBytes(jwt.SigningKey ?? new string('0', 32))
+                ),
+                ClockSkew = TimeSpan.FromMinutes(1),
+            };
+        }
+    );
 
 builder.Services.AddAuthorization();
+
 builder.Services.AddOpenApi(options =>
-{
-    options.AddDocumentTransformer<DocumentInfoTransformer>();
-    options.AddDocumentTransformer<BearerSecurityTransformer>();
-    options.AddOperationTransformer<SecurityRequirementTransformer>();
-});
+    {
+        options.AddDocumentTransformer<DocumentInfoTransformer>();
+        options.AddDocumentTransformer<BearerSecurityTransformer>();
+        options.AddOperationTransformer<SecurityRequirementTransformer>();
+    }
+);
+
 builder.Services.AddProblemDetails();
 
 builder.Services.ConfigureHttpJsonOptions(options =>
-{
-    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
-});
+    {
+        options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    }
+);
 
 var app = builder.Build();
 
 app.UseExceptionHandler(handler => handler.Run(async context =>
-{
-    var feature = context.Features.Get<IExceptionHandlerFeature>();
+        {
+            var feature = context.Features.Get<IExceptionHandlerFeature>();
 
-    var (status, title) = feature?.Error switch
-    {
-        BadHttpRequestException bad => (bad.StatusCode, "Malformed request"),
-        ArgumentException => (StatusCodes.Status400BadRequest, "Invalid argument"),
-        DbUpdateException { InnerException: PostgresException { SqlState: "23505" } } =>
-            (StatusCodes.Status409Conflict, "That already exists"),
-        DbUpdateException { InnerException: PostgresException { SqlState: "23503" } } =>
-            (StatusCodes.Status400BadRequest, "Referenced record does not exist"),
-        _ => (StatusCodes.Status500InternalServerError, "An unexpected error occurred"),
-    };
+            var (status, title) = feature?.Error switch
+            {
+                BadHttpRequestException bad => (bad.StatusCode, "Malformed request"),
+                ArgumentException => (StatusCodes.Status400BadRequest, "Invalid argument"),
+                DbUpdateException { InnerException: PostgresException { SqlState: "23505" } } =>
+                    (StatusCodes.Status409Conflict, "That already exists"),
+                DbUpdateException { InnerException: PostgresException { SqlState: "23503" } } =>
+                    (StatusCodes.Status400BadRequest, "Referenced record does not exist"),
+                _ => (StatusCodes.Status500InternalServerError, "An unexpected error occurred"),
+            };
 
-    context.Response.StatusCode = status;
+            context.Response.StatusCode = status;
 
-    await Results.Problem(
-            title: title,
-            detail: status == StatusCodes.Status500InternalServerError ? null : feature?.Error.Message,
-            statusCode: status)
-        .ExecuteAsync(context);
-}));
+            await Results.Problem(
+                    title: title,
+                    detail: status == StatusCodes.Status500InternalServerError ? null : feature?.Error.Message,
+                    statusCode: status
+                )
+                .ExecuteAsync(context);
+        }
+    )
+);
+
 app.UseStatusCodePages();
 
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi("/openapi/{documentName}.json");
 
-    app.MapScalarApiReference("/docs", options => options
-        .WithTitle("TradeLedger API")
-        .WithTheme(ScalarTheme.BluePlanet)
-        .EnableDarkMode()
-        .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient)
-        .WithOpenApiRoutePattern("/openapi/v1.json")
-        .AddPreferredSecuritySchemes("Bearer"));
+    app.MapScalarApiReference(
+        "/docs",
+        options => options
+            .WithTitle("TradeLedger API")
+            .WithTheme(ScalarTheme.BluePlanet)
+            .EnableDarkMode()
+            .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient)
+            .WithOpenApiRoutePattern("/openapi/v1.json")
+            .AddPreferredSecuritySchemes("Bearer")
+    );
 
     app.UseSwaggerUI(options =>
-    {
-        options.SwaggerEndpoint("/openapi/v1.json", "TradeLedger API v1");
-        options.RoutePrefix = "swagger";
-        options.DocumentTitle = "TradeLedger API";
-        options.DocExpansion(Swashbuckle.AspNetCore.SwaggerUI.DocExpansion.List);
-        options.DefaultModelsExpandDepth(-1);
-        options.DisplayRequestDuration();
-        options.EnableTryItOutByDefault();
-        options.EnablePersistAuthorization();
-        options.EnableFilter();
-    });
+        {
+            options.SwaggerEndpoint("/openapi/v1.json", "TradeLedger API v1");
+            options.RoutePrefix = "swagger";
+            options.DocumentTitle = "TradeLedger API";
+            options.DocExpansion(DocExpansion.List);
+            options.DefaultModelsExpandDepth(-1);
+            options.DisplayRequestDuration();
+            options.EnableTryItOutByDefault();
+            options.EnablePersistAuthorization();
+            options.EnableFilter();
+        }
+    );
 
     app.MapGet("/", () => Results.Redirect("/docs")).ExcludeFromDescription();
 }
