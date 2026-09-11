@@ -14,20 +14,7 @@ public static class PlanEndpoints
 
         group.MapPost("/calculate", (
             [FromBody] PositionSizeRequest request,
-            PositionSizeCalculator calculator) =>
-        {
-            try
-            {
-                return Results.Ok(calculator.Calculate(request));
-            }
-            catch (ArgumentException ex)
-            {
-                return Results.Problem(
-                    title: "Invalid calculator input",
-                    detail: ex.Message,
-                    statusCode: StatusCodes.Status400BadRequest);
-            }
-        })
+            PositionSizeCalculator calculator) => Results.Ok(calculator.Calculate(request)))
         .WithName("CalculatePositionSize")
         .WithSummary("Position size calculator")
         .WithDescription("The workbook Calculator sheet as an endpoint, and stateless: sizing a trade should not require committing to it. Sizes the position so a stop-out loses exactly the risk budget, fees included, then reports order value, margin, take profit at the requested R multiple, and estimated profit and loss net of fees. Side is inferred from where the stop sits relative to entry.")
@@ -64,27 +51,7 @@ public static class PlanEndpoints
             PositionSizeCalculator calculator,
             CancellationToken ct) =>
         {
-            var plan = new TradePlan
-            {
-                AccountId = request.AccountId,
-                Symbol = request.Symbol,
-                Side = request.Side,
-                StrategyId = request.StrategyId,
-                TimeframeId = request.TimeframeId,
-                EntryMentalStateId = request.EntryMentalStateId,
-                PlannedEntryPrice = request.EntryPrice,
-                PlannedStopLossPrice = request.StopLossPrice,
-                RiskFraction = request.RiskFraction,
-                PlannedRiskReward = request.RiskReward,
-                Leverage = request.Leverage ?? 1,
-                AverageFeeRate = request.AverageFeeRate,
-                BalanceAtPlanning = request.Balance,
-                MarketContext = request.MarketContext,
-                Notes = request.Notes,
-                Status = PlanStatus.Active,
-
-                ExpiresAt = request.ExpiresAt ?? DateTimeOffset.UtcNow.AddDays(3),
-            };
+            var plan = TradePlan.Create(request.ToSpec());
 
             if (request.Balance > 0)
             {
@@ -99,12 +66,13 @@ public static class PlanEndpoints
                     AverageFeeRate = request.AverageFeeRate,
                 });
 
-                plan.PlannedQuantity = sizing.Quantity;
-                plan.PlannedOrderValue = sizing.OrderValue;
-                plan.PlannedMargin = sizing.Margin;
-                plan.PlannedTakeProfitPrice = request.TakeProfitPrice ?? sizing.TakeProfitPrice;
-                plan.EstimatedProfit = sizing.EstimatedProfit;
-                plan.EstimatedLoss = sizing.EstimatedLoss;
+                plan.ApplySizing(new PlanSizing(
+                    sizing.Quantity,
+                    sizing.OrderValue,
+                    sizing.Margin,
+                    request.TakeProfitPrice ?? sizing.TakeProfitPrice,
+                    sizing.EstimatedProfit,
+                    sizing.EstimatedLoss));
             }
 
             db.TradePlans.Add(plan);
@@ -115,27 +83,19 @@ public static class PlanEndpoints
         .WithName("CreatePlan")
         .WithSummary("Create a trade plan")
         .WithDescription("Records intent before entry: symbol, side, strategy, stop, risk and R:R, plus the market context checklist. Sizing is calculated and stored alongside. When a matching fill arrives from Bitunix the plan is linked automatically and the trade is flagged planned. Plans expire after three days by default so an untaken plan stops competing to match some later, unrelated trade in the same symbol.")
-        .Produces<PlanResponse>(StatusCodes.Status201Created);
+        .Produces<PlanResponse>(StatusCodes.Status201Created)
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapPost("/{id:guid}/abandon", async (
             Guid id,
             TradeLedgerDbContext db,
             CancellationToken ct) =>
         {
-            var plan = await db.TradePlans.FirstOrDefaultAsync(p => p.Id == id, ct);
-            if (plan is null)
-            {
-                return Results.NotFound();
-            }
+            var plan = await db.TradePlans.FirstOrDefaultAsync(p => p.Id == id, ct)
+                ?? throw new ResourceNotFoundException("Trade plan", id);
 
-            if (plan.Status == PlanStatus.Linked)
-            {
-                return Results.Problem(
-                    title: "Plan already linked to a trade",
-                    statusCode: StatusCodes.Status409Conflict);
-            }
-
-            plan.Status = PlanStatus.Abandoned;
+            plan.Abandon();
             await db.SaveChangesAsync(ct);
 
             return Results.NoContent();
@@ -144,25 +104,7 @@ public static class PlanEndpoints
         .WithSummary("Abandon a plan")
         .WithDescription("Marks a plan as not taken so it stops competing for matches. A plan already linked to a trade cannot be abandoned.")
         .Produces(StatusCodes.Status204NoContent)
+        .ProducesProblem(StatusCodes.Status404NotFound)
         .ProducesProblem(StatusCodes.Status409Conflict);
     }
 }
-
-public sealed record CreatePlanRequest(
-    Guid? AccountId,
-    string Symbol,
-    TradeSide Side,
-    decimal EntryPrice,
-    decimal StopLossPrice,
-    decimal? TakeProfitPrice,
-    decimal RiskFraction,
-    decimal RiskReward,
-    int? Leverage,
-    decimal? AverageFeeRate,
-    decimal Balance,
-    Guid? StrategyId,
-    Guid? TimeframeId,
-    Guid? EntryMentalStateId,
-    MarketContext? MarketContext,
-    string? Notes,
-    DateTimeOffset? ExpiresAt);

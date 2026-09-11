@@ -60,20 +60,3 @@ public static class AuthEndpoints
         .RequireAuthorization();
     }
 }
-
-public sealed record LoginRequest(string Email, string Password);
-
-public sealed record LoginResponse(
-    string Token,
-    DateTimeOffset ExpiresAt,
-    string Email,
-    string? DisplayName);
-
-public sealed record MeResponse(
-    Guid Id,
-    string Email,
-    string? DisplayName,
-    decimal StartingBalance,
-    DateTimeOffset? JournalStartedAt,
-    decimal? DefaultRiskPerTrade,
-    string TimeZoneId);

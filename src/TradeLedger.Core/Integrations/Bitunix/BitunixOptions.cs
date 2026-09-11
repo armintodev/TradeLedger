@@ -20,6 +20,18 @@ public sealed class BitunixOptions
 
     public TimeSpan HttpTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
+    public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(15);
+
+    public int MaxConnectionsPerServer { get; set; } = 10;
+
+    public TimeSpan PooledConnectionLifetime { get; set; } = TimeSpan.FromMinutes(10);
+
+    public TimeSpan PooledConnectionIdleTimeout { get; set; } = TimeSpan.FromMinutes(2);
+
+    public TimeSpan KeepAlivePingDelay { get; set; } = TimeSpan.FromMinutes(1);
+
+    public TimeSpan KeepAlivePingTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
     public TimeSpan ReconcileInterval { get; set; } = TimeSpan.FromMinutes(5);
 
     public TimeSpan SnapshotInterval { get; set; } = TimeSpan.FromMinutes(15);

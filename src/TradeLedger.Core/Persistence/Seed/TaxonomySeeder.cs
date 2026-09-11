@@ -71,15 +71,7 @@ public static class TaxonomySeeder
                     continue;
                 }
 
-                toAdd.Add(
-                    new TaxonomyTerm
-                    {
-                        UserId = userId,
-                        Kind = kind,
-                        Name = names[i],
-                        SortOrder = i,
-                    }
-                );
+                toAdd.Add(TaxonomyTerm.Create(kind, names[i], sortOrder: i, userId: userId));
             }
         }
 

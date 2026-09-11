@@ -61,10 +61,10 @@ public static class StartupSeeder
                 UserName = options.OwnerEmail,
                 Email = options.OwnerEmail,
                 EmailConfirmed = true,
-                DisplayName = options.OwnerDisplayName,
-                StartingBalance = options.StartingBalance,
-                JournalStartedAt = options.JournalStartedAt,
             };
+
+            user.SetDisplayName(options.OwnerDisplayName);
+            user.StartJournal(options.StartingBalance, options.JournalStartedAt);
 
             var result = await users.CreateAsync(user, options.OwnerPassword);
 

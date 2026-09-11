@@ -1,4 +1,3 @@
-using TradeLedger;
 using TradeLedger.Core;
 using TradeLedger.Core.Shared;
 using TradeLedger.Worker;
@@ -11,6 +10,8 @@ builder.Services.AddTradeLedgerCore(builder.Configuration);
 
 builder.Services.AddHostedService<SyncWorker>();
 builder.Services.AddHostedService<SnapshotWorker>();
+builder.Services.AddHostedService<MarketDataWorker>();
+builder.Services.AddHostedService<BacktestWorker>();
 
 var host = builder.Build();
 host.Run();

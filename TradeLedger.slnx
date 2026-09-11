@@ -2,6 +2,8 @@
   <Folder Name="/conf/">
     <File Path="compose.yaml" />
     <File Path="Directory.Build.props" />
+    <File Path="docs/TradeLedger.postman_collection.json" />
+    <File Path="docs/TradeLedger.postman_environment.json" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/TradeLedger.Api/TradeLedger.Api.csproj" />

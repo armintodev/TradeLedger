@@ -12,71 +12,7 @@ public sealed class AnalyticsService(TradeLedgerDbContext db)
     {
         var trades = await Query(filter).ToListAsync(ct).ConfigureAwait(false);
 
-        var closed = trades.Where(t => t.Outcome != TradeOutcome.Open).ToList();
-        var wins = closed.Where(t => t.Outcome == TradeOutcome.Win).ToList();
-        var losses = closed.Where(t => t.Outcome == TradeOutcome.Loss).ToList();
-
-        var grossWin = wins.Sum(t => t.NetProfitLoss);
-
-        var grossLoss = Math.Abs(losses.Sum(t => t.NetProfitLoss));
-
-        var planned = closed.Where(t => t.IsPlanned).ToList();
-        var unplanned = closed.Where(t => !t.IsPlanned).ToList();
-
-        return new PerformanceSummary
-        {
-            TotalTrades = closed.Count,
-            WinningTrades = wins.Count,
-            LosingTrades = losses.Count,
-            BreakevenTrades = closed.Count(t => t.Outcome == TradeOutcome.Breakeven),
-            OpenPositions = trades.Count(t => t.Outcome == TradeOutcome.Open),
-
-            WinRate = closed.Count > 0 ? decimal.Round((decimal)wins.Count / closed.Count * 100m, 2) : 0m,
-
-            GrossProfitLoss = closed.Sum(t => t.GrossProfitLoss),
-            TotalFees = closed.Sum(t => t.Fees),
-            TotalFunding = closed.Sum(t => t.Funding),
-            NetProfitLoss = closed.Sum(t => t.NetProfitLoss),
-
-            AverageWin = wins.Count > 0 ? decimal.Round(grossWin / wins.Count, 8) : 0m,
-            AverageLoss = losses.Count > 0 ? decimal.Round(grossLoss / losses.Count, 8) : 0m,
-
-            ProfitFactor = grossLoss > 0 ? decimal.Round(grossWin / grossLoss, 4) : null,
-
-            Expectancy = closed.Count > 0
-                ? decimal.Round(closed.Sum(t => t.NetProfitLoss) / closed.Count, 8)
-                : 0m,
-
-            AverageAchievedR = closed.Count(t => t.AchievedReturnR is not null) > 0
-                ? decimal.Round(
-                    closed.Where(t => t.AchievedReturnR is not null).Average(t => t.AchievedReturnR!.Value),
-                    4
-                )
-                : null,
-
-            AveragePlannedR = closed.Count(t => t.PlannedReturnR is not null) > 0
-                ? decimal.Round(
-                    closed.Where(t => t.PlannedReturnR is not null).Average(t => t.PlannedReturnR!.Value),
-                    4
-                )
-                : null,
-
-            PlannedTradeCount = planned.Count,
-            UnplannedTradeCount = unplanned.Count,
-            PlannedNetProfitLoss = planned.Sum(t => t.NetProfitLoss),
-            UnplannedNetProfitLoss = unplanned.Sum(t => t.NetProfitLoss),
-
-            LongestWinStreak = LongestStreak(closed, TradeOutcome.Win),
-            LongestLossStreak = LongestStreak(closed, TradeOutcome.Loss),
-
-            AverageDuration = closed.Count(t => t.Duration is not null) > 0
-                ? TimeSpan.FromTicks(
-                    (long)closed
-                        .Where(t => t.Duration is not null)
-                        .Average(t => t.Duration!.Value.Ticks)
-                )
-                : null,
-        };
+        return PerformanceMetrics.Compute([.. trades.Select(ToMetricInput)]);
     }
 
     public async Task<EquityCurve> GetEquityCurveAsync(
@@ -112,48 +48,7 @@ public sealed class AnalyticsService(TradeLedgerDbContext db)
             .Select(g => new EquityPoint(g.Key, g.Sum(x => x.Equity)))
             .ToList();
 
-        var peak = 0m;
-        var maxDrawdown = 0m;
-        var maxDrawdownPercent = 0m;
-        DateTimeOffset? maxDrawdownAt = null;
-
-        foreach (var point in points)
-        {
-            if (point.Equity > peak)
-            {
-                peak = point.Equity;
-            }
-
-            if (peak <= 0)
-            {
-                continue;
-            }
-
-            var drawdown = peak - point.Equity;
-
-            if (drawdown > maxDrawdown)
-            {
-                maxDrawdown = drawdown;
-                maxDrawdownPercent = decimal.Round(drawdown / peak * 100m, 4);
-                maxDrawdownAt = point.At;
-            }
-        }
-
-        var current = points.Count > 0 ? points[^1].Equity : 0m;
-        var currentDrawdown = peak > 0 ? peak - current : 0m;
-
-        return new EquityCurve
-        {
-            Points = points,
-            StartEquity = points.Count > 0 ? points[0].Equity : 0m,
-            CurrentEquity = current,
-            PeakEquity = peak,
-            MaxDrawdown = maxDrawdown,
-            MaxDrawdownPercent = maxDrawdownPercent,
-            MaxDrawdownAt = maxDrawdownAt,
-            CurrentDrawdown = currentDrawdown,
-            CurrentDrawdownPercent = peak > 0 ? decimal.Round(currentDrawdown / peak * 100m, 4) : 0m,
-        };
+        return EquityMath.Analyse(points);
     }
 
     public async Task<List<BreakdownRow>> GetBreakdownAsync(
@@ -222,6 +117,19 @@ public sealed class AnalyticsService(TradeLedgerDbContext db)
             .ToList();
     }
 
+    public static TradeMetricInput ToMetricInput(Trade trade) => new(
+        trade.OpenedAt,
+        trade.ClosedAt,
+        trade.GrossProfitLoss,
+        trade.Fees,
+        trade.Funding,
+        trade.NetProfitLoss,
+        trade.Outcome,
+        trade.AchievedReturnR,
+        trade.PlannedReturnR,
+        trade.IsPlanned,
+        trade.Duration);
+
     private IQueryable<Trade> Query(AnalyticsFilter filter)
     {
         var query = db.Trades.AsNoTracking();
@@ -268,27 +176,6 @@ public sealed class AnalyticsService(TradeLedgerDbContext db)
         BreakdownDimension.Planned => trade.IsPlanned ? "Planned" : "Unplanned",
         _ => "(all)",
     };
-
-    private static int LongestStreak(IEnumerable<Trade> trades, TradeOutcome outcome)
-    {
-        var best = 0;
-        var current = 0;
-
-        foreach (var trade in trades.OrderBy(t => t.ClosedAt ?? t.OpenedAt))
-        {
-            if (trade.Outcome == outcome)
-            {
-                current++;
-                best = Math.Max(best, current);
-            }
-            else
-            {
-                current = 0;
-            }
-        }
-
-        return best;
-    }
 }
 
 public sealed record AnalyticsFilter
@@ -312,54 +199,6 @@ public enum BreakdownDimension
     DayOfWeek,
     HourOfDay,
     Planned,
-}
-
-public sealed record PerformanceSummary
-{
-    public int TotalTrades { get; init; }
-    public int WinningTrades { get; init; }
-    public int LosingTrades { get; init; }
-    public int BreakevenTrades { get; init; }
-    public int OpenPositions { get; init; }
-    public decimal WinRate { get; init; }
-
-    public decimal GrossProfitLoss { get; init; }
-    public decimal TotalFees { get; init; }
-    public decimal TotalFunding { get; init; }
-    public decimal NetProfitLoss { get; init; }
-
-    public decimal AverageWin { get; init; }
-    public decimal AverageLoss { get; init; }
-
-    public decimal? ProfitFactor { get; init; }
-
-    public decimal Expectancy { get; init; }
-    public decimal? AverageAchievedR { get; init; }
-    public decimal? AveragePlannedR { get; init; }
-
-    public int PlannedTradeCount { get; init; }
-    public int UnplannedTradeCount { get; init; }
-    public decimal PlannedNetProfitLoss { get; init; }
-    public decimal UnplannedNetProfitLoss { get; init; }
-
-    public int LongestWinStreak { get; init; }
-    public int LongestLossStreak { get; init; }
-    public TimeSpan? AverageDuration { get; init; }
-}
-
-public sealed record EquityPoint(DateTimeOffset At, decimal Equity);
-
-public sealed record EquityCurve
-{
-    public required List<EquityPoint> Points { get; init; }
-    public decimal StartEquity { get; init; }
-    public decimal CurrentEquity { get; init; }
-    public decimal PeakEquity { get; init; }
-    public decimal MaxDrawdown { get; init; }
-    public decimal MaxDrawdownPercent { get; init; }
-    public DateTimeOffset? MaxDrawdownAt { get; init; }
-    public decimal CurrentDrawdown { get; init; }
-    public decimal CurrentDrawdownPercent { get; init; }
 }
 
 public sealed record BreakdownRow

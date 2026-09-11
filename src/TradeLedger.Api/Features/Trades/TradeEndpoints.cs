@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using TradeLedger.Api.Shared;
 using TradeLedger.Core.Domain;
 using TradeLedger.Core.Persistence;
 
@@ -16,6 +17,7 @@ public static class TradeEndpoints
             [FromQuery] Guid? accountId,
             [FromQuery] string? symbol,
             [FromQuery] ReviewState? reviewState,
+            [FromQuery] MarketSession? marketSession,
             [FromQuery] DateTimeOffset? from,
             [FromQuery] DateTimeOffset? to,
             [FromQuery] int? page,
@@ -45,6 +47,11 @@ public static class TradeEndpoints
                 query = query.Where(t => t.ReviewState == rs);
             }
 
+            if (marketSession is { } session)
+            {
+                query = query.Where(t => t.MarketSession == session);
+            }
+
             if (from is { } f)
             {
                 query = query.Where(t => t.OpenedAt >= f);
@@ -67,7 +74,7 @@ public static class TradeEndpoints
         })
         .WithName("ListTrades")
         .WithSummary("List journal trades")
-        .WithDescription("The journal, newest first, with paging and filters. Each row carries both halves: the mechanical fields from the exchange and whatever subjective fields have been filled in so far.")
+        .WithDescription("The journal, newest first, with paging and filters. Each row carries both halves: the mechanical fields from the exchange and whatever subjective fields have been filled in so far. Filter by marketSession to compare how the Tokyo, London and New York sessions treat you.")
         .Produces<PagedResult<TradeListItem>>();
 
         group.MapGet("/inbox", async (TradeLedgerDbContext db, CancellationToken ct) =>
@@ -89,20 +96,10 @@ public static class TradeEndpoints
 
         group.MapGet("/{id:guid}", async (Guid id, TradeLedgerDbContext db, CancellationToken ct) =>
         {
-            var trade = await db.Trades.AsNoTracking()
-                .Include(t => t.Executions)
-                .Include(t => t.Mistakes).ThenInclude(m => m.Term)
-                .Include(t => t.Trackings).ThenInclude(x => x.Term)
-                .Include(t => t.Attachments)
-                .Include(t => t.Strategy)
-                .Include(t => t.Timeframe)
-                .Include(t => t.EntryType)
-                .Include(t => t.ExitType)
-                .Include(t => t.EntryMentalState)
-                .Include(t => t.ExitMentalState)
-                .FirstOrDefaultAsync(t => t.Id == id, ct);
+            var trade = await LoadDetailAsync(db.Trades.AsNoTracking(), id, ct)
+                ?? throw new ResourceNotFoundException("Trade", id);
 
-            return trade is null ? Results.NotFound() : Results.Ok(TradeDetailResponse.From(trade));
+            return Results.Ok(TradeDetailResponse.From(trade));
         })
         .WithName("GetTrade")
         .WithSummary("Get one trade in full")
@@ -114,134 +111,51 @@ public static class TradeEndpoints
             Guid id,
             [FromBody] JournalTradeRequest request,
             TradeLedgerDbContext db,
+            IUnitOfWork unitOfWork,
             CancellationToken ct) =>
         {
-            var trade = await db.Trades
-                .Include(t => t.Mistakes)
-                .Include(t => t.Trackings)
-                .FirstOrDefaultAsync(t => t.Id == id, ct);
-
-            if (trade is null)
-            {
-                return Results.NotFound();
-            }
-
-            trade.StrategyId = request.StrategyId ?? trade.StrategyId;
-            trade.TimeframeId = request.TimeframeId ?? trade.TimeframeId;
-            trade.EntryTypeId = request.EntryTypeId ?? trade.EntryTypeId;
-            trade.ExitTypeId = request.ExitTypeId ?? trade.ExitTypeId;
-            trade.EntryMentalStateId = request.EntryMentalStateId ?? trade.EntryMentalStateId;
-            trade.ExitMentalStateId = request.ExitMentalStateId ?? trade.ExitMentalStateId;
-            trade.Rating = request.Rating ?? trade.Rating;
-            trade.Memo = request.Memo ?? trade.Memo;
-            trade.Tag = request.Tag ?? trade.Tag;
-            trade.PostTradeTag = request.PostTradeTag ?? trade.PostTradeTag;
-
-            if (request.MarketContext is not null)
-            {
-                trade.MarketContext = request.MarketContext;
-            }
-
-            if (request.StopLossPrice is { } sl)
-            {
-                trade.StopLossPrice = sl;
-            }
-
-            if (request.TakeProfitPrice is { } tp)
-            {
-                trade.TakeProfitPrice = tp;
-            }
-
-            if (request.MistakeIds is not null)
-            {
-                db.TradeMistakes.RemoveRange(trade.Mistakes);
-                foreach (var termId in request.MistakeIds.Distinct())
+            await unitOfWork.ExecuteInTransactionAsync(
+                async token =>
                 {
-                    db.TradeMistakes.Add(new TradeMistake
+                    var trade = await db.Trades
+                        .Include(t => t.Mistakes)
+                        .Include(t => t.Trackings)
+                        .FirstOrDefaultAsync(t => t.Id == id, token)
+                        ?? throw new ResourceNotFoundException("Trade", id);
+
+                    trade.Journal(request.ToEdit());
+
+                    if (request.MistakeIds is not null)
                     {
-                        UserId = trade.UserId,
-                        TradeId = trade.Id,
-                        TaxonomyTermId = termId,
-                    });
-                }
-            }
+                        trade.ReplaceMistakes(request.MistakeIds);
+                    }
 
-            if (request.TrackingIds is not null)
-            {
-                db.TradeTrackings.RemoveRange(trade.Trackings);
-                foreach (var termId in request.TrackingIds.Distinct())
-                {
-                    db.TradeTrackings.Add(new TradeTracking
+                    if (request.TrackingIds is not null)
                     {
-                        UserId = trade.UserId,
-                        TradeId = trade.Id,
-                        TaxonomyTermId = termId,
-                    });
-                }
-            }
+                        trade.ReplaceTrackings(request.TrackingIds);
+                    }
+                },
+                ct);
 
-            if (request.MarkReviewed == true)
-            {
-                trade.ReviewState = ReviewState.Reviewed;
-            }
-
-            trade.Recalculate();
-            await db.SaveChangesAsync(ct);
-
-            var saved = await db.Trades.AsNoTracking()
-                .Include(t => t.Executions)
-                .Include(t => t.Mistakes).ThenInclude(m => m.Term)
-                .Include(t => t.Trackings).ThenInclude(x => x.Term)
-                .Include(t => t.Attachments)
-                .Include(t => t.Strategy)
-                .Include(t => t.Timeframe)
-                .Include(t => t.EntryType)
-                .Include(t => t.ExitType)
-                .Include(t => t.EntryMentalState)
-                .Include(t => t.ExitMentalState)
-                .FirstAsync(t => t.Id == id, ct);
+            var saved = await LoadDetailAsync(db.Trades.AsNoTracking(), id, ct)
+                ?? throw new ResourceNotFoundException("Trade", id);
 
             return Results.Ok(TradeDetailResponse.From(saved));
         })
         .WithName("JournalTrade")
         .WithSummary("Add the subjective half of a trade")
-        .WithDescription("Supplies what the exchange cannot know: strategy, timeframe, entry and exit mental state, market context checklist, mistakes, trackings, rating and memo. Only the fields you send are changed. Setting a stop loss here also recomputes achieved R, since a synced trade has no stop reported by the exchange. Pass markReviewed to clear it from the inbox.")
+        .WithDescription("Supplies what the exchange cannot know: strategy, timeframe, entry and exit mental state, market context checklist, mistakes, trackings, rating and memo. Only the fields you send are changed. Setting a stop loss here also recomputes achieved R, since a synced trade has no stop reported by the exchange. Pass markReviewed to clear it from the inbox. The trade, its mistakes and its trackings are rewritten in one transaction, so a rejected tag cannot leave the row half-updated.")
         .Produces<TradeDetailResponse>()
-        .ProducesProblem(StatusCodes.Status404NotFound);
+        .ProducesProblem(StatusCodes.Status404NotFound)
+        .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapPost("/", async (
             [FromBody] CreateManualTradeRequest request,
             TradeLedgerDbContext db,
             CancellationToken ct) =>
         {
-            var trade = new Trade
-            {
-                AccountId = request.AccountId,
-                Symbol = request.Symbol,
-                Side = request.Side,
-                Origin = TradeOrigin.Manual,
-                OpenedAt = request.OpenedAt,
-                ClosedAt = request.ClosedAt,
-                EntryPrice = request.EntryPrice,
-                ExitPrice = request.ExitPrice,
-                Quantity = request.Quantity,
-                Leverage = request.Leverage ?? 1,
-                PositionMargin = request.PositionMargin,
-                Fees = request.Fees ?? 0m,
-                Funding = request.Funding ?? 0m,
-                StopLossPrice = request.StopLossPrice,
-                TakeProfitPrice = request.TakeProfitPrice,
-                StrategyId = request.StrategyId,
-                Memo = request.Memo,
-            };
+            var trade = Trade.OpenManual(request.ToSpec());
 
-            if (trade.ExitPrice is { } exit)
-            {
-                var direction = trade.Side == TradeSide.Long ? 1m : -1m;
-                trade.GrossProfitLoss = (exit - trade.EntryPrice) * trade.Quantity * direction;
-            }
-
-            trade.Recalculate();
             db.Trades.Add(trade);
             await db.SaveChangesAsync(ct);
 
@@ -249,24 +163,17 @@ public static class TradeEndpoints
         })
         .WithName("CreateManualTrade")
         .WithSummary("Record a manual trade")
-        .WithDescription("For venues no API reaches: external wallets, other exchanges, on-chain swaps. Gross PnL is derived from the prices you enter, then net PnL, outcome, achieved R and duration are computed the same way as for a synced trade.")
-        .Produces<TradeListItem>(StatusCodes.Status201Created);
+        .WithDescription("For venues no API reaches: external wallets, other exchanges, on-chain swaps. Gross PnL is derived from the prices you enter, then net PnL, outcome, achieved R, market session and duration are computed the same way as for a synced trade. A stop or target on the wrong side of the entry is rejected rather than silently producing a nonsense R multiple.")
+        .Produces<TradeListItem>(StatusCodes.Status201Created)
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapDelete("/{id:guid}", async (Guid id, TradeLedgerDbContext db, CancellationToken ct) =>
         {
-            var trade = await db.Trades.FirstOrDefaultAsync(t => t.Id == id, ct);
-            if (trade is null)
-            {
-                return Results.NotFound();
-            }
+            var trade = await db.Trades.FirstOrDefaultAsync(t => t.Id == id, ct)
+                ?? throw new ResourceNotFoundException("Trade", id);
 
-            if (trade.Origin == TradeOrigin.Synced)
-            {
-                return Results.Problem(
-                    title: "Synced trades cannot be deleted",
-                    detail: "This trade came from the exchange and would return on the next sync.",
-                    statusCode: StatusCodes.Status409Conflict);
-            }
+            trade.EnsureDeletable();
 
             db.Trades.Remove(trade);
             await db.SaveChangesAsync(ct);
@@ -277,75 +184,21 @@ public static class TradeEndpoints
         .WithSummary("Delete a manual trade")
         .WithDescription("Manual trades only. A synced trade cannot be deleted: it would reappear on the next sync sweep, and deleting it would discard the journalling attached to it. Returns 409 if you try.")
         .Produces(StatusCodes.Status204NoContent)
+        .ProducesProblem(StatusCodes.Status404NotFound)
         .ProducesProblem(StatusCodes.Status409Conflict);
     }
+
+    private static Task<Trade?> LoadDetailAsync(IQueryable<Trade> trades, Guid id, CancellationToken ct) =>
+        trades
+            .Include(t => t.Executions)
+            .Include(t => t.Mistakes).ThenInclude(m => m.Term)
+            .Include(t => t.Trackings).ThenInclude(x => x.Term)
+            .Include(t => t.Attachments)
+            .Include(t => t.Strategy)
+            .Include(t => t.Timeframe)
+            .Include(t => t.EntryType)
+            .Include(t => t.ExitType)
+            .Include(t => t.EntryMentalState)
+            .Include(t => t.ExitMentalState)
+            .FirstOrDefaultAsync(t => t.Id == id, ct);
 }
-
-public sealed record PagedResult<T>(List<T> Items, int Page, int PageSize, int Total);
-
-public sealed record TradeListItem(
-    Guid Id,
-    Guid AccountId,
-    string Symbol,
-    TradeSide Side,
-    TradeOrigin Origin,
-    ReviewState ReviewState,
-    TradeOutcome Outcome,
-    bool IsPlanned,
-    DateTimeOffset OpenedAt,
-    DateTimeOffset? ClosedAt,
-    decimal EntryPrice,
-    decimal? ExitPrice,
-    decimal Quantity,
-    int Leverage,
-    decimal Fees,
-    decimal Funding,
-    decimal NetProfitLoss,
-    decimal? AchievedReturnR,
-    decimal? PlannedReturnR,
-    string? StrategyName,
-    int? Rating,
-    TimeSpan? Duration)
-{
-    public static TradeListItem From(Trade t) => new(
-        t.Id, t.AccountId, t.Symbol, t.Side, t.Origin, t.ReviewState, t.Outcome, t.IsPlanned,
-        t.OpenedAt, t.ClosedAt, t.EntryPrice, t.ExitPrice, t.Quantity, t.Leverage,
-        t.Fees, t.Funding, t.NetProfitLoss, t.AchievedReturnR, t.PlannedReturnR,
-        t.Strategy != null ? t.Strategy.Name : null, t.Rating, t.Duration);
-}
-
-public sealed record JournalTradeRequest(
-    Guid? StrategyId,
-    Guid? TimeframeId,
-    Guid? EntryTypeId,
-    Guid? ExitTypeId,
-    Guid? EntryMentalStateId,
-    Guid? ExitMentalStateId,
-    MarketContext? MarketContext,
-    decimal? StopLossPrice,
-    decimal? TakeProfitPrice,
-    List<Guid>? MistakeIds,
-    List<Guid>? TrackingIds,
-    int? Rating,
-    string? Memo,
-    string? Tag,
-    string? PostTradeTag,
-    bool? MarkReviewed);
-
-public sealed record CreateManualTradeRequest(
-    Guid AccountId,
-    string Symbol,
-    TradeSide Side,
-    DateTimeOffset OpenedAt,
-    DateTimeOffset? ClosedAt,
-    decimal EntryPrice,
-    decimal? ExitPrice,
-    decimal Quantity,
-    int? Leverage,
-    decimal? PositionMargin,
-    decimal? Fees,
-    decimal? Funding,
-    decimal? StopLossPrice,
-    decimal? TakeProfitPrice,
-    Guid? StrategyId,
-    string? Memo);

@@ -87,7 +87,7 @@ public sealed class TenancyAndIdempotencyTests(PostgresFixture fixture)
 
         await using var db = fixture.CreateContext(userId);
 
-        var trade = new Trade
+        var trade = Trade.OpenManual(new NewManualTrade
         {
             AccountId = accountId,
             Symbol = "ETHUSDT",
@@ -95,7 +95,7 @@ public sealed class TenancyAndIdempotencyTests(PostgresFixture fixture)
             EntryPrice = 3000m,
             Quantity = 1m,
             OpenedAt = DateTimeOffset.UtcNow,
-        };
+        });
 
         db.Trades.Add(trade);
         await db.SaveChangesAsync();
@@ -111,13 +111,12 @@ public sealed class TenancyAndIdempotencyTests(PostgresFixture fixture)
         const decimal tinyPrice = 0.000000012345678901m;
         const decimal preciseQty = 123456.123456789012m;
 
-        var id = Guid.CreateVersion7();
+        Guid id;
 
         await using (var db = fixture.CreateContext(userId))
         {
-            db.Trades.Add(new Trade
+            var trade = Trade.OpenManual(new NewManualTrade
             {
-                Id = id,
                 AccountId = accountId,
                 Symbol = "PEPEUSDT",
                 Side = TradeSide.Long,
@@ -125,6 +124,10 @@ public sealed class TenancyAndIdempotencyTests(PostgresFixture fixture)
                 Quantity = preciseQty,
                 OpenedAt = DateTimeOffset.UtcNow,
             });
+
+            id = trade.Id;
+
+            db.Trades.Add(trade);
 
             await db.SaveChangesAsync();
         }
@@ -178,15 +181,16 @@ public sealed class TenancyAndIdempotencyTests(PostgresFixture fixture)
             .FirstOrDefaultAsync(t => t.AccountId == accountId
                                       && t.ExchangePositionId == dto.PositionId);
 
-        var isNew = trade is null;
-        trade ??= new Trade { UserId = userId, AccountId = accountId, Symbol = dto.Symbol };
+        var snapshot = BitunixPositionMapper.ToSnapshot(dto);
 
-        BitunixPositionMapper.ApplyTo(trade, dto, accountId);
-        trade.Recalculate();
-
-        if (isNew)
+        if (trade is null)
         {
+            trade = Trade.FromExchange(userId, accountId, snapshot);
             db.Trades.Add(trade);
+        }
+        else
+        {
+            trade.ApplyExchangeSnapshot(snapshot);
         }
 
         await db.SaveChangesAsync();
@@ -225,14 +229,12 @@ public sealed class TenancyAndIdempotencyTests(PostgresFixture fixture)
     {
         await using var db = fixture.CreateContext(userId);
 
-        var account = new Account
-        {
-            UserId = userId,
-            Name = name,
-            Kind = AccountKind.ExchangeFutures,
-            Venue = Venue.Bitunix,
-            SyncMode = SyncMode.Api,
-        };
+        var account = Account.Create(
+            name,
+            AccountKind.ExchangeFutures,
+            Venue.Bitunix,
+            SyncMode.Api,
+            userId: userId);
 
         db.Accounts.Add(account);
         await db.SaveChangesAsync();
@@ -240,18 +242,20 @@ public sealed class TenancyAndIdempotencyTests(PostgresFixture fixture)
         return account.Id;
     }
 
-    private static Trade NewTrade(Guid userId, Guid accountId, string positionId) => new()
-    {
-        UserId = userId,
-        AccountId = accountId,
-        Symbol = "BTCUSDT",
-        Side = TradeSide.Long,
-        EntryPrice = 60000m,
-        Quantity = 0.01m,
-        OpenedAt = DateTimeOffset.UtcNow,
-        ExchangePositionId = positionId,
-        Origin = TradeOrigin.Synced,
-    };
+    private static Trade NewTrade(Guid userId, Guid accountId, string positionId) =>
+        Trade.FromExchange(
+            userId,
+            accountId,
+            new ExchangePositionSnapshot
+            {
+                ExchangePositionId = positionId,
+                Symbol = "BTCUSDT",
+                Side = TradeSide.Long,
+                EntryPrice = 60000m,
+                Quantity = 0.01m,
+                OpenedAt = DateTimeOffset.UtcNow,
+                StillOpen = true,
+            });
 
     private static HistoryPositionDto SamplePosition(string positionId) => new()
     {

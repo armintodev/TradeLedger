@@ -2,7 +2,10 @@ using System.Linq.Expressions;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using TradeLedger.Core.Domain;
+using TradeLedger.Core.Domain.Backtesting;
+using TradeLedger.Core.Domain.MarketData;
 using TradeLedger.Core.Extensions;
+using TradeLedger.Core.MarketData;
 using TradeLedger.Core.Shared;
 
 namespace TradeLedger.Core.Persistence;
@@ -29,6 +32,19 @@ public sealed class TradeLedgerDbContext(
     public DbSet<SyncCursor> SyncCursors => Set<SyncCursor>();
     public DbSet<SyncRun> SyncRuns => Set<SyncRun>();
     public DbSet<RawExchangePayload> RawExchangePayloads => Set<RawExchangePayload>();
+
+    public DbSet<Candle> Candles => Set<Candle>();
+    public DbSet<FundingRateHistory> FundingRates => Set<FundingRateHistory>();
+    public DbSet<MarketSymbolAlias> MarketSymbolAliases => Set<MarketSymbolAlias>();
+    public DbSet<CandleImport> CandleImports => Set<CandleImport>();
+    public DbSet<MarketDataBackfillJob> MarketDataBackfillJobs => Set<MarketDataBackfillJob>();
+
+    public DbSet<BacktestAccount> BacktestAccounts => Set<BacktestAccount>();
+    public DbSet<BacktestStrategy> BacktestStrategies => Set<BacktestStrategy>();
+    public DbSet<BacktestRun> BacktestRuns => Set<BacktestRun>();
+    public DbSet<BacktestTrade> BacktestTrades => Set<BacktestTrade>();
+    public DbSet<BacktestExecution> BacktestExecutions => Set<BacktestExecution>();
+    public DbSet<BacktestEquityPoint> BacktestEquityPoints => Set<BacktestEquityPoint>();
 
     public bool BypassUserFilter { get; set; }
 
@@ -104,10 +120,12 @@ public sealed class TradeLedgerDbContext(
 
         foreach (var entry in ChangeTracker.Entries<IUserOwned>())
         {
-            if (entry.State == EntityState.Added && entry.Entity.UserId == Guid.Empty)
+            if (entry.State != EntityState.Added || entry.Entity.UserId != Guid.Empty)
             {
-                entry.Entity.UserId = userId;
+                continue;
             }
+
+            entry.Property(nameof(IUserOwned.UserId)).CurrentValue = userId;
         }
     }
 }

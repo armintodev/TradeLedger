@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "b7f4e2a1-3c8d-4f6b-9e21-5a0c7d8f1234",
     "name": "TradeLedger API",
-    "description": "Personal crypto trade journal and portfolio dashboard, synced automatically from the Bitunix exchange.\n\n**Read-only against the exchange.** TradeLedger never places, modifies or cancels an order.\n\n## Quick start\n\n1. Select the **TradeLedger - Local** environment (or edit the collection variables).\n2. Run **Auth > Login**. The token is saved to `{{token}}` automatically by a test script, and every other request inherits it from collection-level Bearer auth.\n3. Run **Accounts > Create account** to get an `{{accountId}}`, then work through the other folders.\n\nRequests that create something save the new id into a collection variable (`accountId`, `tradeId`, `planId`), so the folders can be run top to bottom, or with the Collection Runner.\n\n## How a trade reaches the journal\n\nA closed Bitunix position becomes a journal row on its own. The mechanical half (prices, quantity, leverage, fees, funding, PnL) comes from the exchange; the subjective half (strategy, mental state, mistakes, rating) is supplied through `PATCH /api/trades/{id}/journal`.\n\nAll enums are sent and returned as strings, e.g. `\"side\": \"Long\"`, `\"kind\": \"ExternalWallet\"`.",
+    "description": "Personal crypto trade journal and portfolio dashboard, synced automatically from the Bitunix exchange.\n\n**Read-only against the exchange.** TradeLedger never places, modifies or cancels an order.\n\n## Quick start\n\n1. Select the **TradeLedger - Local** environment (or edit the collection variables).\n2. Run **Auth > Login**. The token is saved to `{{token}}` automatically by a test script, and every other request inherits it from collection-level Bearer auth.\n3. Run **Accounts > Create account** to get an `{{accountId}}`, then work through the other folders.\n\nRequests that create something save the new id into a collection variable (`accountId`, `tradeId`, `planId`), so the folders can be run top to bottom, or with the Collection Runner.\n\n## Static egress IP\n\nEvery Bitunix request is routed through a per-user proxy so the exchange always sees one static IP. Configure it under **Proxy** *before* attaching credentials. With `Proxy:Required` true (the default), a request with no proxy configured is refused rather than sent from the host address.\n\n## How a trade reaches the journal\n\nA closed Bitunix position becomes a journal row on its own. The mechanical half (prices, quantity, leverage, fees, funding, PnL) comes from the exchange; the subjective half (strategy, mental state, mistakes, rating) is supplied through `PATCH /api/trades/{id}/journal`.\n\nAll enums are sent and returned as strings, e.g. `\"side\": \"Long\"`, `\"kind\": \"ExternalWallet\"`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -90,6 +90,56 @@
       "key": "runSuffix",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "proxyHost",
+      "value": "127.0.0.1",
+      "type": "string"
+    },
+    {
+      "key": "proxyUsername",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "proxyPassword",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "backtestAccountId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "backtestStrategyId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "backtestRunId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "marketDataJobId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "holdingId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "symbol",
+      "value": "BTCUSDT",
+      "type": "string"
+    },
+    {
+      "key": "interval",
+      "value": "OneHour",
+      "type": "string"
     }
   ],
   "item": [
@@ -174,6 +224,112 @@
               ]
             },
             "description": "The signed-in user plus their journal baseline: starting balance, journal start date, default risk per trade and display time zone. Everything is stored UTC; the time zone is for display only."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Proxy",
+      "description": "The egress proxy every Bitunix request is routed through, so the exchange always sees one static IP. Set this before attaching API credentials: credential verification calls Bitunix and must originate from the allowlisted address.",
+      "item": [
+        {
+          "name": "Get proxy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/proxy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "proxy"
+              ]
+            },
+            "description": "Shows the proxy for the current user. The password is never returned, only `hasPassword`. `required` reflects Proxy:Required, and `configurationFallback` is the proxy from the Proxy section of configuration used when no per-user proxy is enabled."
+          }
+        },
+        {
+          "name": "Set proxy - SOCKS5 with auth",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scheme\": \"Socks5\",\n  \"host\": \"{{proxyHost}}\",\n  \"port\": 1080,\n  \"username\": \"{{proxyUsername}}\",\n  \"password\": \"{{proxyPassword}}\",\n  \"enabled\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/proxy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "proxy"
+              ]
+            },
+            "description": "Routes every Bitunix request for this user through a SOCKS5 proxy. The password is encrypted at rest with AES-GCM and never returned. Cached connections for the previous proxy are dropped immediately.\n\n`scheme`: Http, Https, Socks5, Socks4, Socks4a."
+          }
+        },
+        {
+          "name": "Set proxy - HTTP",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scheme\": \"Http\",\n  \"host\": \"{{proxyHost}}\",\n  \"port\": 3128,\n  \"username\": \"{{proxyUsername}}\",\n  \"password\": \"{{proxyPassword}}\",\n  \"enabled\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/proxy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "proxy"
+              ]
+            },
+            "description": "Same thing over an HTTP CONNECT proxy. Omit username and password for an IP-allowlisted proxy that needs no authentication."
+          }
+        },
+        {
+          "name": "Delete proxy",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/proxy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "proxy"
+              ]
+            },
+            "description": "Clears the per-user proxy. With Proxy:Required true and no configuration fallback, every subsequent exchange request is refused rather than sent from the host address."
           }
         }
       ]
@@ -428,6 +584,12 @@
                 {
                   "key": "to",
                   "value": "2026-12-31T23:59:59Z",
+                  "disabled": true
+                },
+                {
+                  "key": "marketSession",
+                  "value": "London",
+                  "description": "Tokyo | London | NewYork, derived from openedAt so you can compare how each session treats you",
                   "disabled": true
                 }
               ]
@@ -1027,7 +1189,25 @@
               ]
             },
             "description": "Asset positions that are not round-trips: spot bags, wallet balances, and liquidity pool or farm positions with their APR and farmed status."
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201 || pm.response.code === 202) {",
+                  "    const id = pm.response.json().length ? pm.response.json()[0].id : null;",
+                  "    if (id) {",
+                  "        pm.collectionVariables.set('holdingId', id);",
+                  "        if (pm.environment.name) { pm.environment.set('holdingId', id); }",
+                  "        console.log('holdingId saved');",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Create holding - LP farm",
@@ -1062,22 +1242,132 @@
           },
           "event": [
             {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201 || pm.response.code === 202) {",
+                  "    const id = pm.response.json().id;",
+                  "    if (id) {",
+                  "        pm.collectionVariables.set('holdingId', id);",
+                  "        if (pm.environment.name) { pm.environment.set('holdingId', id); }",
+                  "        console.log('holdingId saved');",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reprice holding",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"price\": 2500,\n  \"pricedAt\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/holdings/{{holdingId}}/reprice",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "holdings",
+                "{{holdingId}}",
+                "reprice"
+              ]
+            },
+            "description": "Marks the position to market: sets the current price and recomputes the current value, so an unrealised gain on a wallet bag is visible without inventing a trade for it."
+          },
+          "event": [
+            {
               "listen": "prerequest",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// Fall back to the first existing account so this request works on its own.",
-                  "if (!pm.variables.get('accountId')) {",
+                  "if (!pm.variables.get('holdingId')) {",
                   "    pm.sendRequest({",
-                  "        url: pm.variables.get('baseUrl') + '/api/accounts',",
+                  "        url: pm.variables.get('baseUrl') + '/api/holdings',",
                   "        method: 'GET',",
                   "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
                   "    }, function (err, res) {",
                   "        if (!err && res.code === 200) {",
-                  "            const accounts = res.json();",
-                  "            if (accounts.length) {",
-                  "                pm.collectionVariables.set('accountId', accounts[0].id);",
-                  "                if (pm.environment.name) { pm.environment.set('accountId', accounts[0].id); }",
+                  "            const id = res.json().length ? res.json()[0].id : null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('holdingId', id);",
+                  "                if (pm.environment.name) { pm.environment.set('holdingId', id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Close holding",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"closedAt\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/holdings/{{holdingId}}/close",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "holdings",
+                "{{holdingId}}",
+                "close"
+              ]
+            },
+            "description": "Marks the position as exited. Closing an already closed holding, or closing it before it opened, is rejected with 422."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('holdingId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/holdings',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const id = res.json().length ? res.json()[0].id : null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('holdingId', id);",
+                  "                if (pm.environment.name) { pm.environment.set('holdingId', id); }",
                   "            }",
                   "        }",
                   "    });",
@@ -1552,6 +1842,1270 @@
             },
             "description": "Reads the Bitunix futures wallet and records an equity point.\n\nBonus is excluded from equity because it is not withdrawable and would inflate the curve."
           }
+        }
+      ]
+    },
+    {
+      "name": "Market Data",
+      "description": "Historical candles behind backtesting: Binance backfill, CSV import, coverage and gaps. Candles are shared rather than per-account, so a symbol only has to be fetched once.\n\nThe backfill job requests need a job id. Queue one first; there is no list endpoint to fall back to, so running this folder cold leaves the two status requests without a target.",
+      "item": [
+        {
+          "name": "Coverage",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/market-data/coverage",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "market-data",
+                "coverage"
+              ]
+            },
+            "description": "What candle history is already stored, per symbol and interval, with the first and last bar and the count. Start here before queueing a backfill."
+          }
+        },
+        {
+          "name": "Find gaps",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/market-data/gaps?source=BinanceFutures&symbol={{symbol}}&interval={{interval}}&from=2025-01-01T00:00:00Z&to=2025-02-01T00:00:00Z",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "market-data",
+                "gaps"
+              ],
+              "query": [
+                {
+                  "key": "source",
+                  "value": "BinanceFutures"
+                },
+                {
+                  "key": "symbol",
+                  "value": "{{symbol}}"
+                },
+                {
+                  "key": "interval",
+                  "value": "{{interval}}"
+                },
+                {
+                  "key": "from",
+                  "value": "2025-01-01T00:00:00Z"
+                },
+                {
+                  "key": "to",
+                  "value": "2025-02-01T00:00:00Z"
+                }
+              ]
+            },
+            "description": "Missing bars in a range. A rule engine backtest refuses to run over gapped data unless you pass allowGaps, because a missing bar silently skips a signal.\n\n`interval`: FifteenMinutes, ThirtyMinutes, OneHour, TwoHours, FourHours, SixHours, TwelveHours, OneDay, OneWeek. Nothing below fifteen minutes is tradeable; OneMinute exists only for intrabar drill-down."
+          }
+        },
+        {
+          "name": "Queue a backfill",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"BinanceFutures\",\n  \"symbol\": \"{{symbol}}\",\n  \"interval\": \"{{interval}}\",\n  \"from\": \"2025-01-01T00:00:00Z\",\n  \"to\": \"2025-02-01T00:00:00Z\",\n  \"includeFundingRates\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/market-data/backfill",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "market-data",
+                "backfill"
+              ]
+            },
+            "description": "Pulls candles from Binance through the same egress proxy as Bitunix and stores them. Runs as a background job; poll it with Backfill job status.\n\nSet includeFundingRates to also pull the funding history a futures backtest needs."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201 || pm.response.code === 202) {",
+                  "    const id = pm.response.json().id;",
+                  "    if (id) {",
+                  "        pm.collectionVariables.set('marketDataJobId', id);",
+                  "        if (pm.environment.name) { pm.environment.set('marketDataJobId', id); }",
+                  "        console.log('marketDataJobId saved');",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Queue one-minute drill-down",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"BinanceFutures\",\n  \"symbol\": \"{{symbol}}\",\n  \"interval\": \"OneMinute\",\n  \"from\": \"2025-01-01T00:00:00Z\",\n  \"to\": \"2025-02-01T00:00:00Z\",\n  \"includeFundingRates\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/market-data/backfill",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "market-data",
+                "backfill"
+              ]
+            },
+            "description": "One-minute candles are never traded. They exist so the engine can tell whether the stop or the target was hit first inside a bar that touched both. Without them such a bar resolves pessimistically as a stop-out, and the run warns you."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201 || pm.response.code === 202) {",
+                  "    const id = pm.response.json().id;",
+                  "    if (id) {",
+                  "        pm.collectionVariables.set('marketDataJobId', id);",
+                  "        if (pm.environment.name) { pm.environment.set('marketDataJobId', id); }",
+                  "        console.log('marketDataJobId saved');",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Backfill job status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/market-data/backfill/{{marketDataJobId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "market-data",
+                "backfill",
+                "{{marketDataJobId}}"
+              ]
+            },
+            "description": "Progress of a queued backfill: candles written, funding rates written, percent complete, and the error if it failed."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('marketDataJobId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/market-data/coverage',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const id = null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('marketDataJobId', id);",
+                  "                if (pm.environment.name) { pm.environment.set('marketDataJobId', id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel backfill",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/market-data/backfill/{{marketDataJobId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "market-data",
+                "backfill",
+                "{{marketDataJobId}}",
+                "cancel"
+              ]
+            },
+            "description": "Asks the worker to stop. Candles already written are kept; they are valid data regardless of whether the job finished."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('marketDataJobId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/market-data/coverage',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const id = null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('marketDataJobId', id);",
+                  "                if (pm.environment.name) { pm.environment.set('marketDataJobId', id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Import TradingView CSV",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/market-data/import",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "market-data",
+                "import"
+              ]
+            },
+            "description": "For symbols Binance does not carry, or ranges you already exported. Multipart upload: switch the body to form-data, add a `file` field of type File, and `source`, `symbol` and `interval` as text fields.\n\nDuplicate bars are upserted, so re-importing the same file is a no-op."
+          }
+        },
+        {
+          "name": "Delete candles in a range",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/market-data/candles?source=BinanceFutures&symbol={{symbol}}&interval={{interval}}&from=2025-01-01T00:00:00Z&to=2025-01-02T00:00:00Z",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "market-data",
+                "candles"
+              ],
+              "query": [
+                {
+                  "key": "source",
+                  "value": "BinanceFutures"
+                },
+                {
+                  "key": "symbol",
+                  "value": "{{symbol}}"
+                },
+                {
+                  "key": "interval",
+                  "value": "{{interval}}"
+                },
+                {
+                  "key": "from",
+                  "value": "2025-01-01T00:00:00Z"
+                },
+                {
+                  "key": "to",
+                  "value": "2025-01-02T00:00:00Z"
+                }
+              ]
+            },
+            "description": "Removes stored candles so a range can be re-fetched. Finished backtests are untouched: each run keeps its own trades and equity curve."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Backtests",
+      "description": "Simulated accounts, strategies and runs. Entirely separate from the live journal: a backtest never creates a Trade, and no journal row is ever produced by a simulation.\n\nRun order matters: create an account and a strategy first, then queue a run. A run needs candle data for its range, so backfill the symbol under Market Data before queueing, or the queue is refused with `candle_data_has_gaps`. That refusal is the point: a missing bar silently skips a signal, and a backtest you cannot trust is worse than none.",
+      "item": [
+        {
+          "name": "List backtest accounts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/accounts?includeInactive=false",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "accounts"
+              ],
+              "query": [
+                {
+                  "key": "includeInactive",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Simulated balances. Each one is a separate equity curve, so one strategy across hundreds of runs reads as a single account rather than a pile of unrelated results.\n\nSaves the first result to `{{backtestAccountId}}`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201 || pm.response.code === 202) {",
+                  "    const id = pm.response.json().length ? pm.response.json()[0].id : null;",
+                  "    if (id) {",
+                  "        pm.collectionVariables.set('backtestAccountId', id);",
+                  "        if (pm.environment.name) { pm.environment.set('backtestAccountId', id); }",
+                  "        console.log('backtestAccountId saved');",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create backtest account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"EMA cross {{runSuffix}}\",\n  \"startingBalance\": 10000,\n  \"description\": \"Sequential account for the 20/55 EMA cross\",\n  \"currency\": \"USDT\",\n  \"mode\": \"Sequential\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "accounts"
+              ]
+            },
+            "description": "Sequential mode chains runs in date order so each opens at the previous closing balance and sizing compounds; overlapping ranges are then rejected, because compounding the same market twice is fiction.\n\nIndependent mode starts every run at the starting balance and is just a folder for comparing variants.\n\n`mode`: Sequential, Independent."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201 || pm.response.code === 202) {",
+                  "    const id = pm.response.json().id;",
+                  "    if (id) {",
+                  "        pm.collectionVariables.set('backtestAccountId', id);",
+                  "        if (pm.environment.name) { pm.environment.set('backtestAccountId', id); }",
+                  "        console.log('backtestAccountId saved');",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get backtest account",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/accounts/{{backtestAccountId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "accounts",
+                "{{backtestAccountId}}"
+              ]
+            },
+            "description": "Includes the current balance: the starting balance plus the net result of every succeeded run on a sequential account."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('backtestAccountId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/backtests/accounts',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const id = res.json().length ? res.json()[0].id : null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('backtestAccountId', id);",
+                  "                if (pm.environment.name) { pm.environment.set('backtestAccountId', id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update backtest account",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"EMA cross {{runSuffix}} renamed\",\n  \"description\": \"Updated from Postman\",\n  \"isActive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/accounts/{{backtestAccountId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "accounts",
+                "{{backtestAccountId}}"
+              ]
+            },
+            "description": "Rename or archive. Switching an account that already has runs to sequential is refused with 409: those runs may overlap in time and chaining them would double-count the same market."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('backtestAccountId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/backtests/accounts',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const id = res.json().length ? res.json()[0].id : null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('backtestAccountId', id);",
+                  "                if (pm.environment.name) { pm.environment.set('backtestAccountId', id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Account equity curve",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/accounts/{{backtestAccountId}}/equity-curve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "accounts",
+                "{{backtestAccountId}}",
+                "equity-curve"
+              ]
+            },
+            "description": "Every run on the account stitched into one curve in date order, with peak-to-trough drawdown measured across the whole chain rather than per run."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('backtestAccountId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/backtests/accounts',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const id = res.json().length ? res.json()[0].id : null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('backtestAccountId', id);",
+                  "                if (pm.environment.name) { pm.environment.set('backtestAccountId', id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Account performance summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/accounts/{{backtestAccountId}}/summary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "accounts",
+                "{{backtestAccountId}}",
+                "summary"
+              ]
+            },
+            "description": "Win rate, profit factor, expectancy and streaks over every simulated trade on the account, computed by the same metrics code as GET /api/analytics/summary. That is what makes a backtest comparable to your real trading rather than merely adjacent to it."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('backtestAccountId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/backtests/accounts',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const id = res.json().length ? res.json()[0].id : null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('backtestAccountId', id);",
+                  "                if (pm.environment.name) { pm.environment.set('backtestAccountId', id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List strategies",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/strategies?includeInactive=false",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "strategies"
+              ],
+              "query": [
+                {
+                  "key": "includeInactive",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Saved rule trees.\n\nSaves the first result to `{{backtestStrategyId}}`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201 || pm.response.code === 202) {",
+                  "    const id = pm.response.json().length ? pm.response.json()[0].id : null;",
+                  "    if (id) {",
+                  "        pm.collectionVariables.set('backtestStrategyId', id);",
+                  "        if (pm.environment.name) { pm.environment.set('backtestStrategyId', id); }",
+                  "        console.log('backtestStrategyId saved');",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Available indicators",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/strategies/indicators",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "strategies",
+                "indicators"
+              ]
+            },
+            "description": "The indicators a rule may reference, with their outputs and how many warmup bars each needs before it produces a value: Sma, Ema, Rsi, Dmi, Adx."
+          }
+        },
+        {
+          "name": "Validate a rule tree",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rule\": {\n    \"version\": 1,\n    \"indicators\": [\n      {\n        \"id\": \"fast\",\n        \"type\": \"Ema\",\n        \"params\": {\n          \"period\": 20\n        }\n      },\n      {\n        \"id\": \"slow\",\n        \"type\": \"Ema\",\n        \"params\": {\n          \"period\": 55\n        }\n      }\n    ],\n    \"entry\": {\n      \"long\": {\n        \"op\": \"CrossesAbove\",\n        \"left\": {\n          \"ref\": \"fast\"\n        },\n        \"right\": {\n          \"ref\": \"slow\"\n        }\n      },\n      \"short\": {\n        \"op\": \"CrossesBelow\",\n        \"left\": {\n          \"ref\": \"fast\"\n        },\n        \"right\": {\n          \"ref\": \"slow\"\n        }\n      }\n    },\n    \"stopLoss\": {\n      \"kind\": \"Percent\",\n      \"percent\": 2\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/strategies/validate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "strategies",
+                "validate"
+              ]
+            },
+            "description": "Parses without saving and reports the warmup bar count the rule needs. Worth knowing: a 55-period EMA on four-hour candles quietly demands 165 bars of prior history before the first signal can fire.\n\nA rejection carries the exact JSON path, for example `$.indicators[0].params.period`."
+          }
+        },
+        {
+          "name": "Create strategy",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"EMA 20/55 cross {{runSuffix}}\",\n  \"description\": \"Long on fast crossing above slow, short on the inverse\",\n  \"rule\": {\n    \"version\": 1,\n    \"indicators\": [\n      {\n        \"id\": \"fast\",\n        \"type\": \"Ema\",\n        \"params\": {\n          \"period\": 20\n        }\n      },\n      {\n        \"id\": \"slow\",\n        \"type\": \"Ema\",\n        \"params\": {\n          \"period\": 55\n        }\n      }\n    ],\n    \"entry\": {\n      \"long\": {\n        \"op\": \"CrossesAbove\",\n        \"left\": {\n          \"ref\": \"fast\"\n        },\n        \"right\": {\n          \"ref\": \"slow\"\n        }\n      },\n      \"short\": {\n        \"op\": \"CrossesBelow\",\n        \"left\": {\n          \"ref\": \"fast\"\n        },\n        \"right\": {\n          \"ref\": \"slow\"\n        }\n      }\n    },\n    \"stopLoss\": {\n      \"kind\": \"Percent\",\n      \"percent\": 2\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/strategies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "strategies"
+              ]
+            },
+            "description": "The rule tree is validated before it is stored, so an unusable strategy never reaches a run.\n\nExits are not declared here: every position closes on its stop, on a target derived at the run risk-to-reward ratio, or on liquidation. There is no discretionary exit, by design."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201 || pm.response.code === 202) {",
+                  "    const id = pm.response.json().id;",
+                  "    if (id) {",
+                  "        pm.collectionVariables.set('backtestStrategyId', id);",
+                  "        if (pm.environment.name) { pm.environment.set('backtestStrategyId', id); }",
+                  "        console.log('backtestStrategyId saved');",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get strategy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/strategies/{{backtestStrategyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "strategies",
+                "{{backtestStrategyId}}"
+              ]
+            },
+            "description": "One strategy with its full rule tree."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('backtestStrategyId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/backtests/strategies',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const id = res.json().length ? res.json()[0].id : null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('backtestStrategyId', id);",
+                  "                if (pm.environment.name) { pm.environment.set('backtestStrategyId', id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update strategy",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"EMA 20/89 cross {{runSuffix}}\",\n  \"rule\": {\n    \"version\": 1,\n    \"indicators\": [\n      {\n        \"id\": \"fast\",\n        \"type\": \"Ema\",\n        \"params\": {\n          \"period\": 20\n        }\n      },\n      {\n        \"id\": \"slow\",\n        \"type\": \"Ema\",\n        \"params\": {\n          \"period\": 89\n        }\n      }\n    ],\n    \"entry\": {\n      \"long\": {\n        \"op\": \"CrossesAbove\",\n        \"left\": {\n          \"ref\": \"fast\"\n        },\n        \"right\": {\n          \"ref\": \"slow\"\n        }\n      }\n    },\n    \"stopLoss\": {\n      \"kind\": \"Percent\",\n      \"percent\": 2\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/strategies/{{backtestStrategyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "strategies",
+                "{{backtestStrategyId}}"
+              ]
+            },
+            "description": "Bumps the version when the rules actually change. Finished runs are untouched: each stores its own copy of the rule JSON and its hash, so an old result stays explainable after the strategy moves on."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('backtestStrategyId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/backtests/strategies',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const id = res.json().length ? res.json()[0].id : null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('backtestStrategyId', id);",
+                  "                if (pm.environment.name) { pm.environment.set('backtestStrategyId', id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Retire strategy",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/strategies/{{backtestStrategyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "strategies",
+                "{{backtestStrategyId}}"
+              ]
+            },
+            "description": "Deactivates rather than deletes, so runs that used it stay readable."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('backtestStrategyId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/backtests/strategies',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const id = res.json().length ? res.json()[0].id : null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('backtestStrategyId', id);",
+                  "                if (pm.environment.name) { pm.environment.set('backtestStrategyId', id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List runs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests?page=1&pageSize=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Every run, newest first. Filter by accountId, kind or status.\n\n`status`: Queued, Running, Succeeded, Failed, Cancelled.\n\nSaves the first result to `{{backtestRunId}}`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201 || pm.response.code === 202) {",
+                  "    const id = pm.response.json().items.length ? pm.response.json().items[0].id : null;",
+                  "    if (id) {",
+                  "        pm.collectionVariables.set('backtestRunId', id);",
+                  "        if (pm.environment.name) { pm.environment.set('backtestRunId', id); }",
+                  "        console.log('backtestRunId saved');",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Queue a run",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"backtestAccountId\": \"{{backtestAccountId}}\",\n  \"backtestStrategyId\": \"{{backtestStrategyId}}\",\n  \"symbol\": \"{{symbol}}\",\n  \"source\": \"BinanceFutures\",\n  \"interval\": \"{{interval}}\",\n  \"from\": \"2025-01-01T00:00:00Z\",\n  \"to\": \"2025-02-01T00:00:00Z\",\n  \"riskPercentPerPosition\": 2,\n  \"riskRewardRatio\": 2,\n  \"leverage\": 5,\n  \"includeFunding\": true,\n  \"allowGaps\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests"
+              ]
+            },
+            "description": "Queues a simulation and returns 202 straight away; the worker picks it up. Poll it with Get run.\n\nRisk per position is fixed between 1 and 5 percent and read from configuration; risk-to-reward is never below 2. Both are rejected outside those bounds rather than quietly clamped.\n\nThe range must not overlap an existing run on a sequential account, and the candle data must have no gaps unless you pass allowGaps."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('backtestAccountId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/backtests/accounts',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const id = res.json().length ? res.json()[0].id : null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('backtestAccountId', id);",
+                  "                if (pm.environment.name) { pm.environment.set('backtestAccountId', id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201 || pm.response.code === 202) {",
+                  "    const id = pm.response.json().id;",
+                  "    if (id) {",
+                  "        pm.collectionVariables.set('backtestRunId', id);",
+                  "        if (pm.environment.name) { pm.environment.set('backtestRunId', id); }",
+                  "        console.log('backtestRunId saved');",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get run",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/{{backtestRunId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "{{backtestRunId}}"
+              ]
+            },
+            "description": "Status, progress percent, the result summary once it succeeds, and any warnings.\n\nThe warning worth reading: if most exits were assumed rather than resolved, the bar held both the stop and the target and no one-minute data could separate them. Backfill one-minute candles for the range and run it again."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('backtestRunId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/backtests?page=1&pageSize=1',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const id = res.json().items && res.json().items.length ? res.json().items[0].id : null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('backtestRunId', id);",
+                  "                if (pm.environment.name) { pm.environment.set('backtestRunId', id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Run trades",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/{{backtestRunId}}/trades?page=1&pageSize=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "{{backtestRunId}}",
+                "trades"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Every simulated position, with its exit reason, how the intrabar ambiguity was resolved, and MAE and MFE in R."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('backtestRunId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/backtests?page=1&pageSize=1',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const id = res.json().items && res.json().items.length ? res.json().items[0].id : null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('backtestRunId', id);",
+                  "                if (pm.environment.name) { pm.environment.set('backtestRunId', id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Run equity curve",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/{{backtestRunId}}/equity-curve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "{{backtestRunId}}",
+                "equity-curve"
+              ]
+            },
+            "description": "Equity after each closed position, with running drawdown."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('backtestRunId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/backtests?page=1&pageSize=1',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const id = res.json().items && res.json().items.length ? res.json().items[0].id : null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('backtestRunId', id);",
+                  "                if (pm.environment.name) { pm.environment.set('backtestRunId', id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel a run",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/{{backtestRunId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "{{backtestRunId}}",
+                "cancel"
+              ]
+            },
+            "description": "Partial output is discarded rather than kept, so a sequential account balance chain stays correct. A run that already finished returns 409."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('backtestRunId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/backtests?page=1&pageSize=1',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const id = res.json().items && res.json().items.length ? res.json().items[0].id : null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('backtestRunId', id);",
+                  "                if (pm.environment.name) { pm.environment.set('backtestRunId', id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete a run",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/{{backtestRunId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "{{backtestRunId}}"
+              ]
+            },
+            "description": "Removes the run with its trades and equity points. On a sequential account only the most recent run can be deleted, because removing an earlier one would invalidate every balance chained after it."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('backtestRunId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/backtests?page=1&pageSize=1',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const id = res.json().items && res.json().items.length ? res.json().items[0].id : null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('backtestRunId', id);",
+                  "                if (pm.environment.name) { pm.environment.set('backtestRunId', id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

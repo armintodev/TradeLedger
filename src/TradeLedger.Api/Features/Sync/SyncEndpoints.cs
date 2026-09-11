@@ -89,10 +89,3 @@ public static class SyncEndpoints
         .ProducesProblem(StatusCodes.Status404NotFound);
     }
 }
-
-public sealed record SyncStatusResponse(
-    Guid AccountId,
-    string Endpoint,
-    DateTimeOffset? LastSyncedAt,
-    DateTimeOffset? LastRecordAt,
-    bool BackfillComplete);

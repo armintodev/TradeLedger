@@ -1,3 +1,5 @@
+using TradeLedger.Core.Domain;
+
 namespace TradeLedger.Core.Analytics;
 
 public sealed class PositionSizeCalculator
@@ -6,17 +8,17 @@ public sealed class PositionSizeCalculator
     {
         if (request.EntryPrice <= 0)
         {
-            throw new ArgumentException("Entry price must be positive.", nameof(request));
+            throw new DomainValidationException("entryPrice", "Entry price must be greater than zero.");
         }
 
         if (request.StopLossPrice <= 0)
         {
-            throw new ArgumentException("Stop loss must be positive.", nameof(request));
+            throw new DomainValidationException("stopLossPrice", "Stop loss must be greater than zero.");
         }
 
         if (request.EntryPrice == request.StopLossPrice)
         {
-            throw new ArgumentException("Stop loss cannot equal entry price.", nameof(request));
+            throw new DomainValidationException("stopLossPrice", "Stop loss cannot equal the entry price; the risk per unit would be zero.");
         }
 
         var isLong = request.StopLossPrice < request.EntryPrice;

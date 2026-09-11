@@ -98,7 +98,7 @@ public sealed class SecurityRequirementTransformer : IOpenApiOperationTransforme
         [
             new OpenApiSecurityRequirement
             {
-                [new OpenApiSecuritySchemeReference("Bearer")] = []
+                [new OpenApiSecuritySchemeReference("Bearer", context.Document)] = []
             }
         ];
 
@@ -121,6 +121,9 @@ public static class OpenApiTags
         Tag("Portfolio", "Holdings, LP and farm positions, transfers, and manual balance snapshots."),
         Tag("Analytics", "Performance metrics, equity curve, drawdown and breakdowns."),
         Tag("Sync", "Bitunix sync status, manual triggers and historical backfill."),
+        Tag("Proxy", "The egress proxy every exchange request is routed through, so the exchange always sees one static IP."),
+        Tag("Backtests", "Simulated accounts, runs and trades. Entirely separate from the live journal."),
+        Tag("Market Data", "Historical candles behind backtesting: Binance backfill, CSV import, coverage and gaps."),
         Tag("Health", "Liveness probe."),
     ];
 

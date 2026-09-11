@@ -2,21 +2,23 @@ using System.Text;
 using System.Text.Json.Serialization;
 using Scalar.AspNetCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using Npgsql;
 using Swashbuckle.AspNetCore.SwaggerUI;
 using TradeLedger.Api.Features.Accounts;
 using TradeLedger.Api.Features.Analytics;
 using TradeLedger.Api.Features.Auth;
+using TradeLedger.Api.Features.Backtests;
 using TradeLedger.Api.Features.Journal;
+using TradeLedger.Api.Features.MarketData;
 using TradeLedger.Api.Features.Plans;
 using TradeLedger.Api.Features.Portfolio;
+using TradeLedger.Api.Features.Proxy;
 using TradeLedger.Api.Features.Sync;
 using TradeLedger.Api.Features.Trades;
 using TradeLedger.Api.Shared;
+using TradeLedger.Api.Shared.Errors;
 using TradeLedger.Api.Shared.OpenApi;
 using TradeLedger.Core;
 using TradeLedger.Core.Domain;
@@ -83,6 +85,7 @@ builder.Services.AddOpenApi(options =>
 );
 
 builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 
 builder.Services.ConfigureHttpJsonOptions(options =>
     {
@@ -92,32 +95,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 var app = builder.Build();
 
-app.UseExceptionHandler(handler => handler.Run(async context =>
-        {
-            var feature = context.Features.Get<IExceptionHandlerFeature>();
-
-            var (status, title) = feature?.Error switch
-            {
-                BadHttpRequestException bad => (bad.StatusCode, "Malformed request"),
-                ArgumentException => (StatusCodes.Status400BadRequest, "Invalid argument"),
-                DbUpdateException { InnerException: PostgresException { SqlState: "23505" } } =>
-                    (StatusCodes.Status409Conflict, "That already exists"),
-                DbUpdateException { InnerException: PostgresException { SqlState: "23503" } } =>
-                    (StatusCodes.Status400BadRequest, "Referenced record does not exist"),
-                _ => (StatusCodes.Status500InternalServerError, "An unexpected error occurred"),
-            };
-
-            context.Response.StatusCode = status;
-
-            await Results.Problem(
-                    title: title,
-                    detail: status == StatusCodes.Status500InternalServerError ? null : feature?.Error.Message,
-                    statusCode: status
-                )
-                .ExecuteAsync(context);
-        }
-    )
-);
+app.UseExceptionHandler();
 
 app.UseStatusCodePages();
 
@@ -162,8 +140,13 @@ app.MapTradeEndpoints();
 app.MapPlanEndpoints();
 app.MapTaxonomyEndpoints();
 app.MapPortfolioEndpoints();
+app.MapProxyEndpoints();
 app.MapAnalyticsEndpoints();
 app.MapSyncEndpoints();
+app.MapMarketDataEndpoints();
+app.MapBacktestAccountEndpoints();
+app.MapBacktestStrategyEndpoints();
+app.MapBacktestRunEndpoints();
 
 app.MapGet("/health", () => Results.Ok(new HealthResponse("ok", DateTimeOffset.UtcNow)))
     .AllowAnonymous()

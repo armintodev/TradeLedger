@@ -1,4 +1,5 @@
 using TradeLedger.Core.Analytics;
+using TradeLedger.Core.Domain;
 
 namespace TradeLedger.UnitTests;
 
@@ -100,13 +101,13 @@ public class PositionSizeCalculatorTests
             RiskFraction = 0.01m,
         };
 
-        Assert.Throws<ArgumentException>(() => _calculator.Calculate(request));
+        Assert.Throws<DomainValidationException>(() => _calculator.Calculate(request));
     }
 
     [Fact]
     public void Calculate_RejectsNonPositivePrices()
     {
-        Assert.Throws<ArgumentException>(() => _calculator.Calculate(new PositionSizeRequest
+        Assert.Throws<DomainValidationException>(() => _calculator.Calculate(new PositionSizeRequest
         {
             Balance = 10_000m,
             EntryPrice = 0m,
@@ -114,7 +115,7 @@ public class PositionSizeCalculatorTests
             RiskFraction = 0.01m,
         }));
 
-        Assert.Throws<ArgumentException>(() => _calculator.Calculate(new PositionSizeRequest
+        Assert.Throws<DomainValidationException>(() => _calculator.Calculate(new PositionSizeRequest
         {
             Balance = 10_000m,
             EntryPrice = 100m,

@@ -33,16 +33,7 @@ public static class TaxonomyEndpoints
 
                     var terms = await query
                         .OrderBy(t => t.Kind).ThenBy(t => t.SortOrder).ThenBy(t => t.Name)
-                        .Select(t => new TaxonomyTermResponse(
-                                t.Id,
-                                t.Kind,
-                                t.Name,
-                                t.SortOrder,
-                                t.IsActive,
-                                t.ColorHex,
-                                t.Description
-                            )
-                        )
+                        .Select(t => TaxonomyTermResponse.From(t))
                         .ToListAsync(ct);
 
                     return Results.Ok(terms);
@@ -60,29 +51,27 @@ public static class TaxonomyEndpoints
                     TradeLedgerDbContext db,
                     CancellationToken ct) =>
                 {
-                    var term = new TaxonomyTerm
-                    {
-                        Kind = request.Kind,
-                        Name = request.Name,
-                        SortOrder = request.SortOrder ?? 999,
-                        ColorHex = request.ColorHex,
-                        Description = request.Description,
-                    };
+                    var term = TaxonomyTerm.Create(
+                        request.Kind,
+                        request.Name,
+                        request.SortOrder ?? 999,
+                        request.ColorHex,
+                        request.Description);
 
                     db.TaxonomyTerms.Add(term);
                     await db.SaveChangesAsync(ct);
 
                     return Results.Created(
                         $"/api/taxonomy/{term.Id}",
-                        new TaxonomyTermResponse(
-                            term.Id, term.Kind, term.Name, term.SortOrder,
-                            term.IsActive, term.ColorHex, term.Description));
+                        TaxonomyTermResponse.From(term));
                 }
             )
             .WithName("CreateTaxonomyTerm")
             .WithSummary("Add a vocabulary term")
             .WithDescription("Adds a strategy, mental state, mistake or any other journal term for the current user.")
-            .Produces<TaxonomyTermResponse>(StatusCodes.Status201Created);
+            .Produces<TaxonomyTermResponse>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status409Conflict);
 
         group.MapPost(
                 "/{id:guid}/deactivate",
@@ -91,14 +80,10 @@ public static class TaxonomyEndpoints
                     TradeLedgerDbContext db,
                     CancellationToken ct) =>
                 {
-                    var term = await db.TaxonomyTerms.FirstOrDefaultAsync(t => t.Id == id, ct);
+                    var term = await db.TaxonomyTerms.FirstOrDefaultAsync(t => t.Id == id, ct)
+                        ?? throw new ResourceNotFoundException("Taxonomy term", id);
 
-                    if (term is null)
-                    {
-                        return Results.NotFound();
-                    }
-
-                    term.IsActive = false;
+                    term.Deactivate();
                     await db.SaveChangesAsync(ct);
 
                     return Results.NoContent();
@@ -107,24 +92,7 @@ public static class TaxonomyEndpoints
             .WithName("DeactivateTaxonomyTerm")
             .WithSummary("Retire a vocabulary term")
             .WithDescription("Deactivates rather than deletes. Historical trades keep their label and the term simply stops appearing in pickers, so past analytics stay intact.")
-            .Produces(StatusCodes.Status204NoContent);
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status404NotFound);
     }
 }
-
-public sealed record TaxonomyTermResponse(
-    Guid Id,
-    TaxonomyKind Kind,
-    string Name,
-    int SortOrder,
-    bool IsActive,
-    string? ColorHex,
-    string? Description
-);
-
-public sealed record CreateTaxonomyTermRequest(
-    TaxonomyKind Kind,
-    string Name,
-    int? SortOrder,
-    string? ColorHex,
-    string? Description
-);

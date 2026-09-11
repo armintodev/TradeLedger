@@ -63,12 +63,9 @@ public class BitunixMappingTests
     }
 
     [Fact]
-    public void ApplyTo_MapsMechanicalFieldsAndDerivesNet()
+    public void ApplyExchangeSnapshot_MapsMechanicalFieldsAndDerivesNet()
     {
-        var trade = new Trade { Symbol = "placeholder" };
-
-        BitunixPositionMapper.ApplyTo(trade, SamplePosition(), AccountId);
-        trade.Recalculate();
+        var trade = NewSyncedTrade();
 
         Assert.Equal("BTCUSDT", trade.Symbol);
         Assert.Equal(TradeSide.Long, trade.Side);
@@ -81,23 +78,24 @@ public class BitunixMappingTests
     }
 
     [Fact]
-    public void ApplyTo_PreservesTheSubjectiveHalfOnResync()
+    public void ApplyExchangeSnapshot_PreservesTheSubjectiveHalfOnResync()
     {
         var strategyId = Guid.CreateVersion7();
         var mentalStateId = Guid.CreateVersion7();
 
-        var trade = new Trade
+        var trade = NewSyncedTrade();
+
+        trade.Journal(new TradeJournalEdit
         {
-            Symbol = "BTCUSDT",
             StrategyId = strategyId,
             EntryMentalStateId = mentalStateId,
             Rating = 4,
             Memo = "Waited for the retest.",
-            ReviewState = ReviewState.Reviewed,
-            MarketContext = new MarketContext { MarketSession = "London", Rsi = "42" },
-        };
+            MarketContext = MarketContext.Create(marketSession: "London", rsi: "42"),
+            MarkReviewed = true,
+        });
 
-        BitunixPositionMapper.ApplyTo(trade, SamplePosition(), AccountId);
+        trade.ApplyExchangeSnapshot(BitunixPositionMapper.ToSnapshot(SamplePosition()));
 
         Assert.Equal(strategyId, trade.StrategyId);
         Assert.Equal(mentalStateId, trade.EntryMentalStateId);
@@ -108,11 +106,9 @@ public class BitunixMappingTests
     }
 
     [Fact]
-    public void ApplyTo_ConvertsEpochMillisecondsToUtcInstants()
+    public void ApplyExchangeSnapshot_ConvertsEpochMillisecondsToUtcInstants()
     {
-        var trade = new Trade { Symbol = "BTCUSDT" };
-
-        BitunixPositionMapper.ApplyTo(trade, SamplePosition(), AccountId);
+        var trade = NewSyncedTrade();
 
         Assert.Equal(
             DateTimeOffset.FromUnixTimeMilliseconds(1735689600000), trade.OpenedAt);
@@ -121,15 +117,41 @@ public class BitunixMappingTests
     }
 
     [Fact]
-    public void ApplyTo_TreatsFeeAsACostRegardlessOfReportedSign()
+    public void ApplyExchangeSnapshot_TreatsFeeAsACostRegardlessOfReportedSign()
     {
-        var trade = new Trade { Symbol = "BTCUSDT" };
         var dto = SamplePosition();
         dto.Fee = -0.42m;
 
-        BitunixPositionMapper.ApplyTo(trade, dto, AccountId);
+        var trade = NewSyncedTrade(dto);
 
         Assert.Equal(0.42m, trade.Fees);
+    }
+
+    [Fact]
+    public void ApplyExchangeSnapshot_DerivesTheMarketSessionFromTheOpenInstant()
+    {
+        var trade = NewSyncedTrade();
+
+        Assert.Equal(MarketSession.Tokyo, trade.MarketSession);
+    }
+
+    [Fact]
+    public void AManualTradeRefusesAnExchangeSnapshot()
+    {
+        var manual = Trade.OpenManual(new NewManualTrade
+        {
+            AccountId = AccountId,
+            Symbol = "BTCUSDT",
+            Side = TradeSide.Long,
+            OpenedAt = DateTimeOffset.UnixEpoch,
+            EntryPrice = 100m,
+            Quantity = 1m,
+        });
+
+        var thrown = Assert.Throws<DomainRuleException>(
+            () => manual.ApplyExchangeSnapshot(BitunixPositionMapper.ToSnapshot(SamplePosition())));
+
+        Assert.Equal("manual_trade_from_exchange", thrown.Code);
     }
 
     [Fact]
@@ -146,13 +168,20 @@ public class BitunixMappingTests
             Bonus = 50m,
         };
 
-        var snapshot = BitunixPositionMapper.ToSnapshot(dto, AccountId, Guid.CreateVersion7());
+        var snapshot = BalanceSnapshot.Capture(
+            BitunixPositionMapper.ToSnapshot(dto, AccountId, Guid.CreateVersion7()));
 
         Assert.Equal(1000m, snapshot.WalletBalance);
         Assert.Equal(30m, snapshot.UnrealizedPnl);
         Assert.Equal(1030m, snapshot.Equity);
         Assert.Equal(50m, snapshot.Bonus);
     }
+
+    private static Trade NewSyncedTrade(HistoryPositionDto? dto = null) =>
+        Trade.FromExchange(
+            Guid.CreateVersion7(),
+            AccountId,
+            BitunixPositionMapper.ToSnapshot(dto ?? SamplePosition()));
 
     private static HistoryPositionDto SamplePosition() => new()
     {

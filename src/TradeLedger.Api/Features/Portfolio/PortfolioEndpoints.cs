@@ -9,6 +9,13 @@ public static class PortfolioEndpoints
 {
     public static void MapPortfolioEndpoints(this IEndpointRouteBuilder app)
     {
+        MapHoldings(app);
+        MapTransfers(app);
+        MapSnapshots(app);
+    }
+
+    private static void MapHoldings(IEndpointRouteBuilder app)
+    {
         var holdings = app.MapGroup("/api/holdings").WithTags("Portfolio").RequireAuthorization();
 
         holdings.MapGet("/", async (
@@ -23,7 +30,10 @@ public static class PortfolioEndpoints
                 query = query.Where(h => h.ClosedAt == null);
             }
 
-            var rows = await query.OrderBy(h => h.Asset).ToListAsync(ct);
+            var rows = await query
+                .OrderBy(h => h.Asset)
+                .ToListAsync(ct);
+
             return Results.Ok(rows.Select(HoldingResponse.From).ToList());
         })
         .WithName("ListHoldings")
@@ -36,20 +46,7 @@ public static class PortfolioEndpoints
             TradeLedgerDbContext db,
             CancellationToken ct) =>
         {
-            var holding = new Holding
-            {
-                AccountId = request.AccountId,
-                Kind = request.Kind,
-                Asset = request.Asset,
-                Quantity = request.Quantity,
-                AverageEntryPrice = request.AverageEntryPrice,
-                EntryValueUsd = request.EntryValueUsd,
-                PoolName = request.PoolName,
-                FarmApr = request.FarmApr,
-                IsFarmed = request.IsFarmed ?? false,
-                OpenedAt = request.OpenedAt,
-                Note = request.Note,
-            };
+            var holding = Holding.Open(request.ToSpec());
 
             db.Holdings.Add(holding);
             await db.SaveChangesAsync(ct);
@@ -59,8 +56,55 @@ public static class PortfolioEndpoints
         .WithName("CreateHolding")
         .WithSummary("Record a holding")
         .WithDescription("For spot bags, wallet balances and LP or farm positions that no exchange API reports.")
-        .Produces<HoldingResponse>(StatusCodes.Status201Created);
+        .Produces<HoldingResponse>(StatusCodes.Status201Created)
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        holdings.MapPost("/{id:guid}/reprice", async (
+            Guid id,
+            [FromBody] RepriceHoldingRequest request,
+            TradeLedgerDbContext db,
+            CancellationToken ct) =>
+        {
+            var holding = await db.Holdings.FirstOrDefaultAsync(h => h.Id == id, ct)
+                ?? throw new ResourceNotFoundException("Holding", id);
+
+            holding.Reprice(request.Price, request.PricedAt ?? DateTimeOffset.UtcNow);
+            await db.SaveChangesAsync(ct);
+
+            return Results.Ok(HoldingResponse.From(holding));
+        })
+        .WithName("RepriceHolding")
+        .WithSummary("Mark a holding to market")
+        .WithDescription("Sets the current price and recomputes the current value, so an unrealised gain on a wallet bag is visible without inventing a trade for it.")
+        .Produces<HoldingResponse>()
+        .ProducesProblem(StatusCodes.Status404NotFound)
+        .ProducesProblem(StatusCodes.Status400BadRequest);
+
+        holdings.MapPost("/{id:guid}/close", async (
+            Guid id,
+            [FromBody] CloseHoldingRequest request,
+            TradeLedgerDbContext db,
+            CancellationToken ct) =>
+        {
+            var holding = await db.Holdings.FirstOrDefaultAsync(h => h.Id == id, ct)
+                ?? throw new ResourceNotFoundException("Holding", id);
+
+            holding.Close(request.ClosedAt ?? DateTimeOffset.UtcNow);
+            await db.SaveChangesAsync(ct);
+
+            return Results.Ok(HoldingResponse.From(holding));
+        })
+        .WithName("CloseHolding")
+        .WithSummary("Close a holding")
+        .WithDescription("Marks the position as exited. Closing an already closed holding, or closing it before it opened, is rejected.")
+        .Produces<HoldingResponse>()
+        .ProducesProblem(StatusCodes.Status404NotFound)
+        .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+    }
+
+    private static void MapTransfers(IEndpointRouteBuilder app)
+    {
         var transfers = app.MapGroup("/api/transfers").WithTags("Portfolio").RequireAuthorization();
 
         transfers.MapGet("/", async (TradeLedgerDbContext db, CancellationToken ct) =>
@@ -82,22 +126,7 @@ public static class PortfolioEndpoints
             TradeLedgerDbContext db,
             CancellationToken ct) =>
         {
-            var transfer = new Transfer
-            {
-                FromAccountId = request.FromAccountId,
-                ToAccountId = request.ToAccountId,
-                Direction = request.Direction,
-                Asset = request.Asset,
-                Amount = request.Amount,
-                Fee = request.Fee ?? 0m,
-                ValueUsd = request.ValueUsd,
-                WriteOff = request.WriteOff ?? false,
-                Network = request.Network,
-                TxHash = request.TxHash,
-                Counterparty = request.Counterparty,
-                Note = request.Note,
-                OccurredAt = request.OccurredAt,
-            };
+            var transfer = Transfer.Record(request.ToSpec());
 
             db.Transfers.Add(transfer);
             await db.SaveChangesAsync(ct);
@@ -106,9 +135,14 @@ public static class PortfolioEndpoints
         })
         .WithName("CreateTransfer")
         .WithSummary("Record a transfer")
-        .WithDescription("Money moving in, out or between accounts, including money that simply vanished. Set writeOff for funds that were lost rather than delivered, such as a send on the wrong network, so the equity curve shows it honestly.")
-        .Produces<TransferResponse>(StatusCodes.Status201Created);
+        .WithDescription("Money moving in, out or between accounts, including money that simply vanished. Set writeOff for funds that were lost rather than delivered, such as a send on the wrong network, so the equity curve shows it honestly. A deposit must name a destination, a withdrawal a source, and an internal move both.")
+        .Produces<TransferResponse>(StatusCodes.Status201Created)
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+    }
 
+    private static void MapSnapshots(IEndpointRouteBuilder app)
+    {
         var snapshots = app.MapGroup("/api/snapshots").WithTags("Portfolio").RequireAuthorization();
 
         snapshots.MapPost("/", async (
@@ -116,17 +150,7 @@ public static class PortfolioEndpoints
             TradeLedgerDbContext db,
             CancellationToken ct) =>
         {
-            var snapshot = new BalanceSnapshot
-            {
-                AccountId = request.AccountId,
-                Asset = request.Asset ?? "USDT",
-                WalletBalance = request.WalletBalance,
-                Available = request.Available ?? request.WalletBalance,
-                UnrealizedPnl = request.UnrealizedPnl ?? 0m,
-                Equity = request.WalletBalance + (request.UnrealizedPnl ?? 0m),
-                CapturedAt = request.CapturedAt ?? DateTimeOffset.UtcNow,
-                IsManual = true,
-            };
+            var snapshot = BalanceSnapshot.Capture(request.ToSpec());
 
             db.BalanceSnapshots.Add(snapshot);
             await db.SaveChangesAsync(ct);
@@ -136,42 +160,7 @@ public static class PortfolioEndpoints
         .WithName("CreateManualSnapshot")
         .WithSummary("Record a manual balance snapshot")
         .WithDescription("An equity mark for an account with no API, read off by hand. Snapshots are the sole source of the equity curve and every drawdown number, so recording them for manual venues keeps the curve whole.")
-        .Produces<BalanceSnapshotResponse>(StatusCodes.Status201Created);
+        .Produces<BalanceSnapshotResponse>(StatusCodes.Status201Created)
+        .ProducesProblem(StatusCodes.Status400BadRequest);
     }
 }
-
-public sealed record CreateHoldingRequest(
-    Guid AccountId,
-    HoldingKind Kind,
-    string Asset,
-    decimal Quantity,
-    decimal? AverageEntryPrice,
-    decimal? EntryValueUsd,
-    string? PoolName,
-    decimal? FarmApr,
-    bool? IsFarmed,
-    DateTimeOffset OpenedAt,
-    string? Note);
-
-public sealed record CreateTransferRequest(
-    Guid? FromAccountId,
-    Guid? ToAccountId,
-    TransferDirection Direction,
-    string Asset,
-    decimal Amount,
-    decimal? Fee,
-    decimal? ValueUsd,
-    bool? WriteOff,
-    string? Network,
-    string? TxHash,
-    string? Counterparty,
-    string? Note,
-    DateTimeOffset OccurredAt);
-
-public sealed record CreateSnapshotRequest(
-    Guid AccountId,
-    string? Asset,
-    decimal WalletBalance,
-    decimal? Available,
-    decimal? UnrealizedPnl,
-    DateTimeOffset? CapturedAt);

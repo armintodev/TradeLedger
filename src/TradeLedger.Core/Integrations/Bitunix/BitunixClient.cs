@@ -5,11 +5,12 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TradeLedger.Core.Integrations.Bitunix.Dtos;
+using TradeLedger.Core.Shared.Proxy;
 
 namespace TradeLedger.Core.Integrations.Bitunix;
 
 public sealed class BitunixClient(
-    HttpClient http,
+    IBitunixHttpClientProvider clients,
     IOptions<BitunixOptions> options,
     IBitunixRateLimiter rateLimiter,
     ILogger<BitunixClient> logger
@@ -18,7 +19,7 @@ public sealed class BitunixClient(
     private readonly BitunixOptions _options = options.Value;
 
     public Task<HistoryPositionsPage?> GetHistoryPositionsAsync(
-        BitunixCredentials credentials,
+        BitunixConnection connection,
         string? symbol = null,
         long? startTimeMs = null,
         long? endTimeMs = null,
@@ -39,13 +40,13 @@ public sealed class BitunixClient(
         return GetAsync<HistoryPositionsPage>(
             "/api/v1/futures/position/get_history_positions",
             query,
-            credentials,
+            connection,
             ct
         );
     }
 
     public Task<HistoryTradesPage?> GetHistoryTradesAsync(
-        BitunixCredentials credentials,
+        BitunixConnection connection,
         string? symbol = null,
         long? startTimeMs = null,
         long? endTimeMs = null,
@@ -66,13 +67,13 @@ public sealed class BitunixClient(
         return GetAsync<HistoryTradesPage>(
             "/api/v1/futures/trade/get_history_trades",
             query,
-            credentials,
+            connection,
             ct
         );
     }
 
     public Task<List<HistoryPositionDto>?> GetPendingPositionsAsync(
-        BitunixCredentials credentials,
+        BitunixConnection connection,
         string? symbol = null,
         CancellationToken ct = default)
     {
@@ -82,30 +83,34 @@ public sealed class BitunixClient(
         return GetAsync<List<HistoryPositionDto>>(
             "/api/v1/futures/position/get_pending_positions",
             query,
-            credentials,
+            connection,
             ct
         );
     }
 
     public Task<FuturesAccountDto?> GetFuturesAccountAsync(
-        BitunixCredentials credentials,
+        BitunixConnection connection,
         string marginCoin = "USDT",
         CancellationToken ct = default)
     {
         var query = new Dictionary<string, string?> { ["marginCoin"] = marginCoin };
 
-        return GetAsync<FuturesAccountDto>("/api/v1/futures/account", query, credentials, ct);
+        return GetAsync<FuturesAccountDto>("/api/v1/futures/account", query, connection, ct);
     }
 
     public async Task<(bool Ok, string? Error)> VerifyCredentialsAsync(
-        BitunixCredentials credentials,
+        BitunixConnection connection,
         CancellationToken ct = default)
     {
         try
         {
-            await GetFuturesAccountAsync(credentials, ct: ct).ConfigureAwait(false);
+            await GetFuturesAccountAsync(connection, ct: ct).ConfigureAwait(false);
 
             return (true, null);
+        }
+        catch (ProxyRequiredException ex)
+        {
+            return (false, ex.Message);
         }
         catch (BitunixApiException ex)
         {
@@ -113,16 +118,20 @@ public sealed class BitunixClient(
         }
         catch (HttpRequestException ex)
         {
-            return (false, $"Could not reach Bitunix: {ex.Message}");
+            return (false,
+                $"Could not reach Bitunix via {connection.DescribeEgress()}: {ex.Message}");
         }
     }
 
     private async Task<T?> GetAsync<T>(
         string path,
         Dictionary<string, string?> query,
-        BitunixCredentials credentials,
+        BitunixConnection connection,
         CancellationToken ct)
     {
+        var credentials = connection.Credentials;
+        var http = clients.GetClient(connection.Proxy);
+
         await rateLimiter.WaitAsync(credentials.ApiKeyHint, ct).ConfigureAwait(false);
 
         var canonicalQuery = BitunixSigner.CanonicalQuery(query);
@@ -147,15 +156,16 @@ public sealed class BitunixClient(
         request.Headers.TryAddWithoutValidation("language", _options.Language);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-        using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
-        var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var response = await http.SendAsync(request, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)
         {
             logger.LogWarning(
-                "Bitunix {Path} returned HTTP {Status}",
+                "Bitunix {Path} returned HTTP {Status} via {Egress}",
                 path,
-                (int)response.StatusCode
+                (int)response.StatusCode,
+                connection.DescribeEgress()
             );
 
             throw new BitunixApiException(
@@ -225,6 +235,11 @@ public sealed class BitunixClient(
 }
 
 public readonly record struct BitunixCredentials(string ApiKey, string ApiSecret, string ApiKeyHint);
+
+public readonly record struct BitunixConnection(BitunixCredentials Credentials, ProxyEndpoint? Proxy)
+{
+    public string DescribeEgress() => Proxy?.Describe() ?? "direct";
+}
 
 public sealed class BitunixApiException(string message, int? code = null, Exception? inner = null)
     : Exception(message, inner)

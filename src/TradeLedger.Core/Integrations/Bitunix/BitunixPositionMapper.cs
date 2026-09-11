@@ -5,63 +5,41 @@ namespace TradeLedger.Core.Integrations.Bitunix;
 
 public static class BitunixPositionMapper
 {
-    public static void ApplyTo(Trade trade, HistoryPositionDto dto, Guid accountId)
-    {
-        trade.AccountId = accountId;
-        trade.Origin = TradeOrigin.Synced;
-        trade.ExchangePositionId = dto.PositionId;
-        trade.Symbol = dto.Symbol;
-        trade.Side = ParseSide(dto.Side);
-        trade.Quantity = dto.MaxQty;
-        trade.EntryPrice = dto.EntryPrice;
-        trade.ExitPrice = dto.ClosePrice > 0 ? dto.ClosePrice : null;
-        trade.Leverage = dto.Leverage > 0 ? dto.Leverage : 1;
-        trade.MarginMode = ParseMarginMode(dto.MarginMode);
-        trade.PositionMode = ParsePositionMode(dto.PositionMode);
-        trade.LiquidationPrice = dto.LiqPrice;
-        trade.LiquidatedQuantity = dto.LiqQty > 0 ? dto.LiqQty : null;
-
-        trade.Fees = Math.Abs(dto.Fee);
-
-        trade.Funding = dto.Funding;
-
-        trade.GrossProfitLoss = dto.RealizedPnl;
-
-        if (dto.Ctime is { } ctime)
+    public static ExchangePositionSnapshot ToSnapshot(HistoryPositionDto dto, bool stillOpen = false) =>
+        new()
         {
-            trade.OpenedAt = DateTimeOffset.FromUnixTimeMilliseconds(ctime);
-            trade.OpenedAtRawMs = ctime;
-        }
+            ExchangePositionId = dto.PositionId,
+            Symbol = dto.Symbol,
+            Side = ParseSide(dto.Side),
+            Quantity = dto.MaxQty,
+            EntryPrice = dto.EntryPrice,
+            ExitPrice = dto.ClosePrice > 0 ? dto.ClosePrice : null,
+            Leverage = dto.Leverage > 0 ? dto.Leverage : 1,
+            MarginMode = ParseMarginMode(dto.MarginMode),
+            PositionMode = ParsePositionMode(dto.PositionMode),
+            LiquidationPrice = dto.LiqPrice,
+            LiquidatedQuantity = dto.LiqQty > 0 ? dto.LiqQty : null,
+            Fees = Math.Abs(dto.Fee),
+            Funding = dto.Funding,
+            GrossProfitLoss = dto.RealizedPnl,
+            OpenedAt = dto.Ctime is { } ctime
+                ? DateTimeOffset.FromUnixTimeMilliseconds(ctime)
+                : null,
+            OpenedAtRawMs = dto.Ctime,
+            ClosedAt = dto.Mtime is { } mtime
+                ? DateTimeOffset.FromUnixTimeMilliseconds(mtime)
+                : null,
+            ClosedAtRawMs = dto.Mtime,
+            StillOpen = stillOpen,
+        };
 
-        if (dto.Mtime is { } mtime)
-        {
-            trade.ClosedAt = DateTimeOffset.FromUnixTimeMilliseconds(mtime);
-            trade.ClosedAtRawMs = mtime;
-        }
-
-        if (trade.PositionMargin is null && trade.Leverage > 0 && trade.EntryPrice > 0)
-        {
-            trade.OrderValue = trade.EntryPrice * trade.Quantity;
-            trade.PositionMargin = trade.OrderValue / trade.Leverage;
-        }
-    }
-
-    public static void ApplyOpenTo(Trade trade, HistoryPositionDto dto, Guid accountId)
-    {
-        ApplyTo(trade, dto, accountId);
-        trade.ClosedAt = null;
-        trade.ClosedAtRawMs = null;
-        trade.ExitPrice = null;
-        trade.Outcome = TradeOutcome.Open;
-    }
-
-    public static Execution ToExecution(HistoryTradeDto dto, Trade trade)
+    public static NewExecution ToExecution(HistoryTradeDto dto, Trade trade)
     {
         var side = ParseSide(dto.Side);
         var isReduce = string.Equals(dto.ReduceOnly, "true", StringComparison.OrdinalIgnoreCase)
                        || side != trade.Side;
 
-        return new Execution
+        return new NewExecution
         {
             UserId = trade.UserId,
             TradeId = trade.Id,
@@ -83,12 +61,12 @@ public static class BitunixPositionMapper
         };
     }
 
-    public static BalanceSnapshot ToSnapshot(FuturesAccountDto dto, Guid accountId, Guid userId)
+    public static NewBalanceSnapshot ToSnapshot(FuturesAccountDto dto, Guid accountId, Guid userId)
     {
         var unrealized = dto.CrossUnrealizedPnl + dto.IsolationUnrealizedPnl;
         var wallet = dto.Available + dto.Frozen + dto.Margin;
 
-        return new BalanceSnapshot
+        return new NewBalanceSnapshot
         {
             UserId = userId,
             AccountId = accountId,
@@ -98,10 +76,9 @@ public static class BitunixPositionMapper
             Margin = dto.Margin,
             WalletBalance = wallet,
             UnrealizedPnl = unrealized,
-
-            Equity = wallet + unrealized,
             Bonus = dto.Bonus,
             CapturedAt = DateTimeOffset.UtcNow,
+            IsManual = false,
         };
     }
 

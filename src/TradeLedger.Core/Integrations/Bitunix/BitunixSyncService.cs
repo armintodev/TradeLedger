@@ -6,13 +6,16 @@ using TradeLedger.Core.Domain;
 using TradeLedger.Core.Integrations.Bitunix.Dtos;
 using TradeLedger.Core.Persistence;
 using TradeLedger.Core.Shared;
+using TradeLedger.Core.Shared.Proxy;
 
 namespace TradeLedger.Core.Integrations.Bitunix;
 
 public sealed class BitunixSyncService(
     TradeLedgerDbContext db,
+    IUnitOfWork unitOfWork,
     BitunixClient client,
     ICredentialProtector protector,
+    IUserProxyResolver proxyResolver,
     IDistributedLock distributedLock,
     IOptions<BitunixOptions> options,
     ILogger<BitunixSyncService> logger
@@ -29,8 +32,7 @@ public sealed class BitunixSyncService(
         CancellationToken ct = default)
     {
         await using var handle = await distributedLock
-            .TryAcquireAsync($"sync:account:{accountId}", TimeSpan.FromMinutes(10), ct)
-            .ConfigureAwait(false);
+            .TryAcquireAsync($"sync:account:{accountId}", TimeSpan.FromMinutes(10), ct);
 
         if (handle is null)
         {
@@ -39,15 +41,15 @@ public sealed class BitunixSyncService(
             return SyncOutcome.Skipped;
         }
 
-        var account = await LoadAccountAsync(accountId, ct).ConfigureAwait(false);
+        var account = await LoadAccountAsync(accountId, ct);
 
         if (account is null)
         {
             return SyncOutcome.Skipped;
         }
 
-        var credentials = Decrypt(account.Credential!);
-        var cursor = await GetOrCreateCursorAsync(account, PositionsEndpoint, ct).ConfigureAwait(false);
+        var connection = await ConnectAsync(account, ct);
+        var cursor = await GetOrCreateCursorAsync(account, PositionsEndpoint, ct);
 
         var run = StartRun(account, PositionsEndpoint, backfill);
 
@@ -57,22 +59,20 @@ public sealed class BitunixSyncService(
 
         try
         {
-            var floorMs = backfill
-                ? account.TrackedFrom?.ToUnixTimeMilliseconds()
-                : cursor.LastRecordMs;
+            var floorMs = cursor.WatermarkFor(backfill, account.TrackedFrom);
 
             var skip = 0;
-            var newestSeenMs = cursor.LastRecordMs;
+            long? newestSeenMs = null;
 
             while (!ct.IsCancellationRequested)
             {
                 var page = await client.GetHistoryPositionsAsync(
-                    credentials,
+                    connection,
                     startTimeMs: floorMs,
                     skip: skip,
                     limit: _options.MaxPageSize,
                     ct: ct
-                ).ConfigureAwait(false);
+                );
 
                 requests++;
 
@@ -83,22 +83,25 @@ public sealed class BitunixSyncService(
                     break;
                 }
 
-                foreach (var dto in items)
-                {
-                    seen++;
-
-                    if (await UpsertPositionAsync(account, dto, ct).ConfigureAwait(false))
+                await unitOfWork.ExecuteInTransactionAsync(
+                    async token =>
                     {
-                        written++;
-                    }
+                        foreach (var dto in items)
+                        {
+                            seen++;
 
-                    if (dto.Ctime is { } c && (newestSeenMs is null || c > newestSeenMs))
-                    {
-                        newestSeenMs = c;
-                    }
-                }
+                            if (await UpsertPositionAsync(account, dto, token))
+                            {
+                                written++;
+                            }
 
-                await db.SaveChangesAsync(ct).ConfigureAwait(false);
+                            if (dto.Ctime is { } c && (newestSeenMs is null || c > newestSeenMs))
+                            {
+                                newestSeenMs = c;
+                            }
+                        }
+                    },
+                    ct);
 
                 if (items.Count < _options.MaxPageSize)
                 {
@@ -108,33 +111,28 @@ public sealed class BitunixSyncService(
                 skip += items.Count;
             }
 
-            cursor.LastRecordMs = newestSeenMs;
-            cursor.LastSyncedAt = DateTimeOffset.UtcNow;
+            cursor.Advance(newestSeenMs);
 
             if (backfill)
             {
-                cursor.BackfillComplete = true;
+                cursor.CompleteBackfill();
             }
 
-            run.Status = SyncRunStatus.Succeeded;
+            run.Succeed();
 
             return SyncOutcome.Completed(seen, written);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            run.Status = SyncRunStatus.Failed;
-            run.Error = ex.Message;
+            run.Fail(ex.Message);
             logger.LogError(ex, "Bitunix position sync failed for account {AccountId}.", accountId);
 
             throw;
         }
         finally
         {
-            run.FinishedAt = DateTimeOffset.UtcNow;
-            run.RecordsSeen = seen;
-            run.RecordsWritten = written;
-            run.RequestsMade = requests;
-            await db.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+            run.Finish(seen, written, requests);
+            await db.SaveChangesAsync(CancellationToken.None);
         }
     }
 
@@ -142,26 +140,27 @@ public sealed class BitunixSyncService(
         Guid accountId,
         CancellationToken ct = default)
     {
-        var account = await LoadAccountAsync(accountId, ct).ConfigureAwait(false);
+        var account = await LoadAccountAsync(accountId, ct);
 
         if (account is null)
         {
             return null;
         }
 
-        var credentials = Decrypt(account.Credential!);
+        var connection = await ConnectAsync(account, ct);
 
-        var dto = await client.GetFuturesAccountAsync(credentials, account.QuoteAsset, ct)
-            .ConfigureAwait(false);
+        var dto = await client.GetFuturesAccountAsync(connection, account.QuoteAsset, ct);
 
         if (dto is null)
         {
             return null;
         }
 
-        var snapshot = BitunixPositionMapper.ToSnapshot(dto, account.Id, account.UserId);
+        var snapshot = BalanceSnapshot.Capture(
+            BitunixPositionMapper.ToSnapshot(dto, account.Id, account.UserId));
+
         db.BalanceSnapshots.Add(snapshot);
-        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        await db.SaveChangesAsync(ct);
 
         return snapshot;
     }
@@ -176,30 +175,31 @@ public sealed class BitunixSyncService(
             .FirstOrDefaultAsync(
                 t => t.AccountId == account.Id && t.ExchangePositionId == dto.PositionId,
                 ct
-            )
-            .ConfigureAwait(false);
+            );
+
+        var snapshot = BitunixPositionMapper.ToSnapshot(dto);
 
         var isNew = existing is null;
+        Trade trade;
 
-        var trade = existing ?? new Trade
+        if (existing is null)
         {
-            UserId = account.UserId,
-            AccountId = account.Id,
-            Symbol = dto.Symbol,
-            ReviewState = ReviewState.Unreviewed,
-        };
+            trade = Trade.FromExchange(account.UserId, account.Id, snapshot);
+            db.Trades.Add(trade);
+        }
+        else
+        {
+            trade = existing;
+            trade.ApplyExchangeSnapshot(snapshot);
+        }
 
-        BitunixPositionMapper.ApplyTo(trade, dto, account.Id);
+        var balanceBefore = await GetBalanceBeforeAsync(account.Id, trade.OpenedAt, ct);
 
-        var balanceBefore = await GetBalanceBeforeAsync(account.Id, trade.OpenedAt, ct)
-            .ConfigureAwait(false);
-
-        trade.Recalculate(balanceBefore);
+        trade.ApplyBalanceContext(balanceBefore);
 
         if (isNew)
         {
-            db.Trades.Add(trade);
-            await TryLinkPlanAsync(trade, ct).ConfigureAwait(false);
+            await TryLinkPlanAsync(trade, ct);
         }
 
         StoreRawPayload(account, PositionsEndpoint, dto.PositionId, dto);
@@ -209,7 +209,7 @@ public sealed class BitunixSyncService(
 
     private async Task TryLinkPlanAsync(Trade trade, CancellationToken ct)
     {
-        var plan = await db.TradePlans
+        var candidates = await db.TradePlans
             .IgnoreQueryFilters()
             .Where(p => p.UserId == trade.UserId
                         && p.Symbol == trade.Symbol
@@ -219,29 +219,9 @@ public sealed class BitunixSyncService(
                         && (p.ExpiresAt == null || p.ExpiresAt >= trade.OpenedAt)
             )
             .OrderByDescending(p => p.CreatedAt)
-            .FirstOrDefaultAsync(ct)
-            .ConfigureAwait(false);
+            .ToListAsync(ct);
 
-        if (plan is null)
-        {
-            trade.IsPlanned = false;
-
-            return;
-        }
-
-        plan.Status = PlanStatus.Linked;
-        plan.LinkedTradeId = trade.Id;
-
-        trade.TradePlanId = plan.Id;
-        trade.IsPlanned = true;
-
-        trade.StrategyId ??= plan.StrategyId;
-        trade.TimeframeId ??= plan.TimeframeId;
-        trade.EntryMentalStateId ??= plan.EntryMentalStateId;
-        trade.StopLossPrice ??= plan.PlannedStopLossPrice;
-        trade.TakeProfitPrice ??= plan.PlannedTakeProfitPrice;
-        trade.PlannedReturnR ??= plan.PlannedRiskReward;
-        trade.MarketContext ??= plan.MarketContext;
+        TradePlanMatcher.Link(trade, candidates);
     }
 
     private Task<decimal?> GetBalanceBeforeAsync(Guid accountId, DateTimeOffset openedAt, CancellationToken ct) =>
@@ -264,21 +244,13 @@ public sealed class BitunixSyncService(
 
         if (existing is not null)
         {
-            existing.Entity.Payload = json;
+            existing.Entity.Replace(json);
 
             return;
         }
 
         db.RawExchangePayloads.Add(
-            new RawExchangePayload
-            {
-                UserId = account.UserId,
-                AccountId = account.Id,
-                Endpoint = endpoint,
-                ExternalId = externalId,
-                Payload = json,
-            }
-        );
+            RawExchangePayload.Capture(account.UserId, account.Id, endpoint, externalId, json));
     }
 
     private async Task<Account?> LoadAccountAsync(Guid accountId, CancellationToken ct)
@@ -286,8 +258,7 @@ public sealed class BitunixSyncService(
         var account = await db.Accounts
             .IgnoreQueryFilters()
             .Include(a => a.Credential)
-            .FirstOrDefaultAsync(a => a.Id == accountId, ct)
-            .ConfigureAwait(false);
+            .FirstOrDefaultAsync(a => a.Id == accountId, ct);
 
         if (account is null)
         {
@@ -303,12 +274,7 @@ public sealed class BitunixSyncService(
             return null;
         }
 
-        if (!account.IsActive || account.SyncMode != SyncMode.Api)
-        {
-            return null;
-        }
-
-        return account;
+        return account.SyncsAutomatically ? account : null;
     }
 
     private BitunixCredentials Decrypt(ExchangeCredential credential) => new(
@@ -317,6 +283,18 @@ public sealed class BitunixSyncService(
         credential.ApiKeyHint
     );
 
+    private async Task<BitunixConnection> ConnectAsync(Account account, CancellationToken ct)
+    {
+        var proxy = await proxyResolver.ResolveAsync(account.UserId, ct);
+
+        logger.LogDebug(
+            "Account {AccountId} will reach Bitunix via {Egress}",
+            account.Id,
+            proxy?.Describe() ?? "direct");
+
+        return new BitunixConnection(Decrypt(account.Credential!), proxy);
+    }
+
     private async Task<SyncCursor> GetOrCreateCursorAsync(
         Account account,
         string endpoint,
@@ -324,20 +302,14 @@ public sealed class BitunixSyncService(
     {
         var cursor = await db.SyncCursors
             .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(c => c.AccountId == account.Id && c.Endpoint == endpoint, ct)
-            .ConfigureAwait(false);
+            .FirstOrDefaultAsync(c => c.AccountId == account.Id && c.Endpoint == endpoint, ct);
 
         if (cursor is not null)
         {
             return cursor;
         }
 
-        cursor = new SyncCursor
-        {
-            UserId = account.UserId,
-            AccountId = account.Id,
-            Endpoint = endpoint,
-        };
+        cursor = SyncCursor.For(account, endpoint);
 
         db.SyncCursors.Add(cursor);
 
@@ -346,13 +318,7 @@ public sealed class BitunixSyncService(
 
     private SyncRun StartRun(Account account, string endpoint, bool backfill)
     {
-        var run = new SyncRun
-        {
-            UserId = account.UserId,
-            AccountId = account.Id,
-            Endpoint = endpoint,
-            IsBackfill = backfill,
-        };
+        var run = SyncRun.Start(account, endpoint, backfill);
 
         db.SyncRuns.Add(run);
 
