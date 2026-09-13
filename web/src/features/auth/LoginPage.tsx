@@ -33,7 +33,7 @@ export function LoginPage() {
   const destination = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';
 
   const form = useForm({
-    initialValues: { email: '', password: '' },
+    initialValues: { email: '82.arminhabibi@gmail.com', password: '12345678' },
     validate: {
       email: (value) => (value.trim().length > 0 ? null : 'Enter your email'),
       password: (value) => (value.length > 0 ? null : 'Enter your password'),
