@@ -497,14 +497,14 @@ foreign-key violation (23503) → 400.
 ### Postman
 
 `docs/TradeLedger.postman_collection.json` and
-`docs/TradeLedger.postman_environment.json` — 74 requests in 12 folders,
+`docs/TradeLedger.postman_environment.json` — 77 requests in 12 folders,
 collection-level bearer auth, and scripts that capture ids as you go.
 
 Import both, set `password` in the environment, run **Auth > Login**; the token
 is saved automatically and everything else inherits it. Requests that need an
-`accountId`, `tradeId`, `holdingId`, `backtestAccountId`, `backtestStrategyId`
-or `backtestRunId` fetch one lazily in a pre-request script, so any request also
-works on its own and the Collection Runner passes top to bottom.
+`accountId`, `tradeId`, `holdingId`, `backtestAccountId`, `backtestStrategyId`,
+`backtestRunId` or `backtestTradeId` fetch one lazily in a pre-request script, so
+any request also works on its own and the Collection Runner passes top to bottom.
 
 **Runtime ids live in collection variables, not the environment** — the
 environment holds only `baseUrl`, `email` and `password`. An empty environment
