@@ -36,7 +36,54 @@ export const queryKeys = {
   syncRuns: ['sync', 'runs'] as const,
 
   proxy: ['proxy'] as const,
+
+  // Backtests. Three roots rather than one, so invalidating a run does not
+  // needlessly refetch every strategy.
+  backtestRuns: ['backtest-runs'] as const,
+  backtestRunList: (filters: BacktestRunFilters) => ['backtest-runs', 'list', filters] as const,
+  backtestRun: (id: string) => ['backtest-runs', id] as const,
+  backtestRunTrades: (id: string, page: number) => ['backtest-runs', id, 'trades', page] as const,
+  backtestRunEquity: (id: string) => ['backtest-runs', id, 'equity'] as const,
+
+  backtestAccounts: ['backtest-accounts'] as const,
+  backtestAccountList: (includeInactive: boolean) =>
+    ['backtest-accounts', 'list', { includeInactive }] as const,
+  backtestAccount: (id: string) => ['backtest-accounts', id] as const,
+  backtestAccountEquity: (id: string) => ['backtest-accounts', id, 'equity'] as const,
+  backtestAccountSummary: (id: string) => ['backtest-accounts', id, 'summary'] as const,
+
+  backtestStrategies: ['backtest-strategies'] as const,
+  backtestStrategyList: (includeInactive: boolean) =>
+    ['backtest-strategies', 'list', { includeInactive }] as const,
+  backtestStrategy: (id: string) => ['backtest-strategies', id] as const,
+  indicators: ['backtest-strategies', 'indicators'] as const,
+
+  /**
+   * Keyed on the document text. A given document's verdict cannot change, so
+   * this caches forever and undo back to a checked shape is instant.
+   */
+  ruleValidation: (json: string) => ['rule-validation', json] as const,
+
+  marketData: ['market-data'] as const,
+  coverage: ['market-data', 'coverage'] as const,
+  gaps: (query: GapQuery | null) => ['market-data', 'gaps', query] as const,
+  backfillJob: (id: string) => ['market-data', 'backfill', id] as const,
 };
+
+export interface BacktestRunFilters {
+  accountId?: string;
+  status?: string;
+  page: number;
+  pageSize: number;
+}
+
+export interface GapQuery {
+  source: string;
+  symbol: string;
+  interval: string;
+  from: string;
+  to: string;
+}
 
 /** The analytics query string every analytics endpoint shares. */
 export function analyticsQuery(filters: AnalyticsFilters) {

@@ -625,3 +625,318 @@ export interface ProxyUpdatedResponse {
   egress: string;
   enabled: boolean;
 }
+
+// ------------------------------------------------- market data (enums)
+
+export type CandleSource = 'BinanceFutures' | 'BinanceSpot' | 'CsvImport';
+
+/**
+ * Note the deliberate holes in the underlying numbering — 3m and 5m do not
+ * exist. Never derive this from an index.
+ *
+ * `OneMinute` is drill-down only: it exists so the engine can resolve which of
+ * a stop or a target was hit first inside a larger bar. It is legal for
+ * backfill, import, gaps, coverage and delete, and rejected by the backtest
+ * queue endpoint.
+ */
+export type CandleInterval =
+  | 'OneMinute'
+  | 'FifteenMinutes'
+  | 'ThirtyMinutes'
+  | 'OneHour'
+  | 'TwoHours'
+  | 'FourHours'
+  | 'SixHours'
+  | 'TwelveHours'
+  | 'OneDay'
+  | 'OneWeek';
+
+export type MarketDataJobStatus = 'Queued' | 'Running' | 'Succeeded' | 'Failed' | 'Cancelled';
+
+// ------------------------------------------------- backtests (enums)
+
+export type BacktestAccountMode = 'Sequential' | 'Independent';
+
+/** `WhatIf` is scaffolding — there is no engine and no endpoint that queues one. */
+export type BacktestKind = 'RuleEngine' | 'WhatIf';
+
+export type BacktestStatus = 'Queued' | 'Running' | 'Succeeded' | 'Failed' | 'Cancelled';
+
+/**
+ * Set from the request's `allowGaps` at queue time and never corrected, so it
+ * means "gaps were permitted", not "gaps were present". See
+ * `docs/backtest-impl.md` §1.
+ */
+export type DataQuality = 'Clean' | 'Gapped';
+
+export type BacktestExitReason = 'StopLoss' | 'TakeProfit' | 'Liquidation' | 'EndOfData';
+
+/** How a trade's exit was decided when one bar held both the stop and the target. */
+export type IntrabarResolution =
+  'Unambiguous' | 'ResolvedByMinute' | 'AssumedWithinMinute' | 'AssumedNoMinuteData';
+
+// ------------------------------------------------- market data
+
+export interface MarketDataCoverageResponse {
+  source: CandleSource;
+  symbol: string;
+  interval: CandleInterval;
+  rowCount: number;
+  firstOpenTime: Instant | null;
+  lastOpenTime: Instant | null;
+  isTradeable: boolean;
+}
+
+/**
+ * A run of consecutive missing bars, not a single timestamp.
+ *
+ * `from` and `to` are the open times of the first and last **missing** bar, so a
+ * one-bar gap has `from === to`. Backfilling a gap verbatim is therefore
+ * rejected with `empty_backfill_window` — use `backfillWindowFor` in
+ * `lib/marketData.ts`, which adds one interval to `to`.
+ */
+export interface CandleGapResponse {
+  from: Instant;
+  to: Instant;
+  missingCount: number;
+}
+
+export interface BackfillRequest {
+  source: CandleSource;
+  symbol: string;
+  interval: CandleInterval;
+  from: Instant;
+  to: Instant;
+  includeFundingRates?: boolean | null;
+}
+
+export interface BackfillJobResponse {
+  id: Guid;
+  source: CandleSource;
+  symbol: string;
+  interval: CandleInterval;
+  from: Instant;
+  to: Instant;
+  status: MarketDataJobStatus;
+  candlesWritten: number;
+  fundingRatesWritten: number;
+  /** Time-based, written once per 30-day chunk — not a smooth progress bar. */
+  progressPercent: number;
+  queuedAt: Instant;
+  startedAt: Instant | null;
+  finishedAt: Instant | null;
+  error: string | null;
+}
+
+export interface CandleImportResponse {
+  id: Guid;
+  fileName: string;
+  source: CandleSource;
+  symbol: string;
+  interval: CandleInterval;
+  rowsParsed: number;
+  rowsInserted: number;
+  rowsSkippedAsDuplicate: number;
+  firstOpenTime: Instant | null;
+  lastOpenTime: Instant | null;
+  warnings: string[];
+}
+
+export interface DeleteCandlesResponse {
+  deleted: number;
+}
+
+// ------------------------------------------------- backtest accounts
+
+export interface BacktestAccountResponse {
+  id: Guid;
+  name: string;
+  description: string | null;
+  startingBalance: number;
+  /** Starting balance plus every succeeded run's net, on a sequential account. */
+  currentBalance: number;
+  netProfitLoss: number;
+  currency: string;
+  mode: BacktestAccountMode;
+  backtestStrategyId: Guid | null;
+  succeededRuns: number;
+  isActive: boolean;
+  createdAt: Instant;
+}
+
+export interface CreateBacktestAccountRequest {
+  name: string;
+  startingBalance: number;
+  description?: string | null;
+  currency?: string | null;
+  mode?: BacktestAccountMode | null;
+  backtestStrategyId?: Guid | null;
+}
+
+/** Every field is an optional patch. `backtestStrategyId` is not updatable. */
+export interface UpdateBacktestAccountRequest {
+  name?: string | null;
+  description?: string | null;
+  mode?: BacktestAccountMode | null;
+  isActive?: boolean | null;
+}
+
+// ------------------------------------------------- backtest strategies
+
+export interface BacktestStrategyResponse {
+  id: Guid;
+  name: string;
+  description: string | null;
+  ruleHash: string;
+  version: number;
+  strategyTermId: Guid | null;
+  isActive: boolean;
+  createdAt: Instant;
+  updatedAt: Instant;
+  /** Populated only by `GET /{id}` and `PUT /{id}` — null on the list and on create. */
+  rule: unknown | null;
+}
+
+export interface SaveBacktestStrategyRequest {
+  name: string;
+  /** The rule document inline, not a string. */
+  rule: unknown;
+  description?: string | null;
+  strategyTermId?: Guid | null;
+}
+
+/** Always answers 200, even for a rejected rule. `isValid` is the discriminant. */
+export interface RuleValidationResponse {
+  isValid: boolean;
+  warmupBars: number | null;
+  /** Echoed as `"fast (Ema 20)"`. */
+  indicators: string[] | null;
+  hasLongEntry: boolean | null;
+  hasShortEntry: boolean | null;
+  /** A JSON path into the rule tree, e.g. `$.indicators[0].params.period`. */
+  path: string | null;
+  reason: string | null;
+}
+
+export interface IndicatorDescriptionResponse {
+  type: string;
+  outputs: string[];
+  takesSource: boolean;
+  warmupMultiplier: number;
+  minPeriod: number;
+  maxPeriod: number;
+}
+
+// ------------------------------------------------- backtest runs
+
+export interface QueueBacktestRequest {
+  backtestAccountId: Guid;
+  from: Instant;
+  to: Instant;
+  /** Optional on the wire, but a run without one fails seconds after it starts. */
+  backtestStrategyId?: Guid | null;
+  symbol?: string | null;
+  source?: CandleSource | null;
+  interval?: CandleInterval | null;
+  riskPercentPerPosition?: number | null;
+  riskRewardRatio?: number | null;
+  leverage?: number | null;
+  takerFeeRate?: number | null;
+  /** Accepted, stored, and never used — every simulated fill is a taker. */
+  makerFeeRate?: number | null;
+  slippageRate?: number | null;
+  maintenanceMarginRate?: number | null;
+  includeFunding?: boolean | null;
+  allowGaps?: boolean | null;
+}
+
+/**
+ * `skippedNoCandleData` and `liquidationRiskCount` are declared by the API but
+ * never assigned, so they are always 0. They are deliberately absent here —
+ * see `docs/backtest-impl.md` §5.
+ */
+export interface BacktestResultSummary {
+  performance: PerformanceSummary | null;
+  maxIntrabarDrawdown: number;
+  maxIntrabarDrawdownPercent: number;
+  ambiguousSignals: number;
+  skippedInvalidStop: number;
+  skippedInsufficientMargin: number;
+  openAtEndOfData: number;
+  resolvedUnambiguous: number;
+  resolvedByMinute: number;
+  assumedWithinMinute: number;
+  assumedNoMinuteData: number;
+}
+
+export interface BacktestRunResponse {
+  id: Guid;
+  backtestAccountId: Guid;
+  kind: BacktestKind;
+  status: BacktestStatus;
+  backtestStrategyId: Guid | null;
+  /** The run's frozen rule identity. The rule itself is not exposed. */
+  ruleHash: string | null;
+  symbol: string | null;
+  source: CandleSource | null;
+  interval: CandleInterval | null;
+  from: Instant;
+  to: Instant;
+  openingBalance: number;
+  closingBalance: number | null;
+  riskPercentPerPosition: number;
+  riskRewardRatio: number;
+  leverage: number;
+  takerFeeRate: number;
+  slippageRate: number;
+  maintenanceMarginRate: number;
+  includeFunding: boolean;
+  allowGaps: boolean;
+  dataQuality: DataQuality;
+  engineVersion: number;
+  totalBars: number;
+  barsProcessed: number;
+  progressPercent: number;
+  cancellationRequested: boolean;
+  queuedAt: Instant;
+  startedAt: Instant | null;
+  finishedAt: Instant | null;
+  error: string | null;
+  result: BacktestResultSummary | null;
+  warnings: string[];
+}
+
+export interface BacktestTradeResponse {
+  id: Guid;
+  sequence: number;
+  symbol: string;
+  side: TradeSide;
+  openedAt: Instant;
+  closedAt: Instant | null;
+  barsInTrade: number;
+  entryPrice: number;
+  exitPrice: number | null;
+  quantity: number;
+  leverage: number;
+  positionMargin: number;
+  orderValue: number;
+  stopLossPrice: number;
+  takeProfitPrice: number;
+  liquidationPrice: number;
+  grossProfitLoss: number;
+  fees: number;
+  funding: number;
+  netProfitLoss: number;
+  achievedReturnR: number | null;
+  plannedReturnR: number | null;
+  tradeGainPercent: number | null;
+  balanceAfter: number;
+  duration: Duration | null;
+  outcome: TradeOutcome;
+  exitReason: BacktestExitReason | null;
+  intrabarResolution: IntrabarResolution;
+  wasLiquidated: boolean;
+  maeR: number | null;
+  mfeR: number | null;
+  sourceTradeId: Guid | null;
+}

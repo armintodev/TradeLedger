@@ -13,6 +13,7 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconChartHistogram,
+  IconFlask,
   IconChecklist,
   IconLayoutDashboard,
   IconLogout,
@@ -35,6 +36,7 @@ const NAV_ITEMS = [
   { to: '/analytics', label: 'Analytics', icon: IconChartHistogram, end: false },
   { to: '/portfolio', label: 'Portfolio', icon: IconWallet, end: false },
   { to: '/plans', label: 'Plans', icon: IconTargetArrow, end: false },
+  { to: '/backtests', label: 'Backtests', icon: IconFlask, end: false },
   { to: '/settings', label: 'Settings', icon: IconSettings, end: false },
 ];
 
