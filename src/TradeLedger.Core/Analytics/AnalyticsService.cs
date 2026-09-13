@@ -162,13 +162,17 @@ public sealed class AnalyticsService(TradeLedgerDbContext db)
         return query;
     }
 
-    private static string KeyFor(Trade trade, BreakdownDimension dimension) => dimension switch
+    public static string KeyFor(Trade trade, BreakdownDimension dimension) => dimension switch
     {
         BreakdownDimension.Strategy => trade.Strategy?.Name ?? "(none)",
         BreakdownDimension.Symbol => trade.Symbol,
         BreakdownDimension.Side => trade.Side.ToString(),
         BreakdownDimension.Timeframe => trade.Timeframe?.Name ?? "(none)",
-        BreakdownDimension.MarketSession => trade.MarketContext?.MarketSession ?? "(none)",
+        // The derived [Flags] session, not MarketContext.MarketSession — that one is the
+        // trader's free-text checklist note, so grouping on it collapses every unreviewed
+        // trade into "(none)" and never produces a Tokyo/London/New York comparison.
+        // Overlaps stay a single combined key, so TradeCount still sums to the total.
+        BreakdownDimension.MarketSession => MarketSessionCalendar.Describe(trade.MarketSession),
         BreakdownDimension.EntryMentalState => trade.EntryMentalState?.Name ?? "(none)",
         BreakdownDimension.ExitMentalState => trade.ExitMentalState?.Name ?? "(none)",
         BreakdownDimension.DayOfWeek => trade.OpenedAt.UtcDateTime.DayOfWeek.ToString(),

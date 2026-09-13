@@ -350,6 +350,23 @@ dotnet user-secrets set "Proxy:Password" "..."
 settings above every exchange request is refused rather than sent from your own
 address.
 
+**`Cors:AllowedOrigins`** lists the browser origins allowed to call the API. The
+frontend is served from a different origin, so an origin missing here fails in
+the browser with a console CORS error and no server-side log. It ships empty in
+`appsettings.json` — a misconfigured deployment refuses browser origins rather
+than accepting all of them — and `appsettings.Development.json` already carries
+`http://localhost:5173` (Vite dev) and `http://localhost:4173` (`vite preview`).
+The resolved list is logged once at startup, so check the first lines of the log
+when a request never arrives. A container deployment sets its own origin through
+the environment, using the standard `__` separator for array indices:
+
+```bash
+Cors__AllowedOrigins__0=http://localhost:8080
+```
+
+Credentialed CORS is deliberately off: the frontend authenticates with an
+`Authorization: Bearer` header, not cookies.
+
 Then run. Migrations apply and the owner account plus taxonomy seed on startup:
 
 ```bash

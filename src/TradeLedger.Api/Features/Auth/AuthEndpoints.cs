@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using TradeLedger.Api.Shared;
+using TradeLedger.Api.Shared.Errors;
 using TradeLedger.Core.Domain;
 
 namespace TradeLedger.Api.Features.Auth;
@@ -15,15 +16,22 @@ public static class AuthEndpoints
             [FromBody] LoginRequest request,
             UserManager<AppUser> users,
             JwtTokenService tokens,
+            HttpContext http,
             CancellationToken ct) =>
         {
             var user = await users.FindByEmailAsync(request.Email);
 
             if (user is null || !await users.CheckPasswordAsync(user, request.Password))
             {
-                return Results.Problem(
-                    title: "Invalid credentials",
-                    statusCode: StatusCodes.Status401Unauthorized);
+                // Shaped through ApiProblem like every other failure, so the response
+                // carries a code and a traceId. The code deliberately does not say
+                // which half was wrong.
+                return Results.Problem(ApiProblem.From(
+                    http,
+                    StatusCodes.Status401Unauthorized,
+                    "Invalid credentials",
+                    "invalid_credentials",
+                    "That email and password combination was not recognised."));
             }
 
             var (token, expiresAt) = tokens.Issue(user);

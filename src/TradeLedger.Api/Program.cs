@@ -30,6 +30,16 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
 builder.Services.Configure<SeedOptions>(builder.Configuration.GetSection(SeedOptions.SectionName));
 
+var cors = builder.Configuration.GetSection(CorsOptions.SectionName).Get<CorsOptions>()
+           ?? new CorsOptions();
+
+builder.Services.AddCors(options =>
+    options.AddPolicy(CorsOptions.PolicyName, policy =>
+        policy
+            .WithOrigins(cors.AllowedOrigins)
+            .AllowAnyHeader()
+            .AllowAnyMethod()));
+
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<IUserContext, HttpUserContext>();
 builder.Services.AddSingleton<JwtTokenService>();
@@ -98,6 +108,18 @@ var app = builder.Build();
 app.UseExceptionHandler();
 
 app.UseStatusCodePages();
+
+// Before authentication and the endpoints: a preflight OPTIONS carries no
+// Authorization header, and after the exception handler so that error
+// responses keep their allow-origin header instead of reading as a network
+// failure in the browser.
+app.UseCors(CorsOptions.PolicyName);
+
+app.Logger.LogInformation(
+    "CORS policy '{Policy}' allows {Count} origin(s): {Origins}",
+    CorsOptions.PolicyName,
+    cors.AllowedOrigins.Length,
+    string.Join(", ", cors.AllowedOrigins));
 
 if (app.Environment.IsDevelopment())
 {
