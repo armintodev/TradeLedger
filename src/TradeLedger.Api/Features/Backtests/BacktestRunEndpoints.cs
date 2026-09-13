@@ -201,6 +201,26 @@ public static class BacktestRunEndpoints
         .Produces<PagedResult<BacktestTradeResponse>>()
         .ProducesProblem(StatusCodes.Status404NotFound);
 
+        group.MapGet("/{id:guid}/trades/{tradeId:guid}", async (
+            Guid id,
+            Guid tradeId,
+            TradeLedgerDbContext db,
+            CancellationToken ct) =>
+        {
+            var trade = await db.BacktestTrades
+                .AsNoTracking()
+                .Include(t => t.Executions)
+                .FirstOrDefaultAsync(t => t.Id == tradeId && t.BacktestRunId == id, ct)
+                ?? throw new ResourceNotFoundException("Backtest trade", tradeId);
+
+            return Results.Ok(BacktestTradeDetailResponse.From(trade));
+        })
+        .WithName("GetBacktestRunTrade")
+        .WithSummary("One simulated position in full")
+        .WithDescription("Everything the engine recorded about a single position: when it was opened and closed and for how many bars it was held, entry and exit price, the stop, target and liquidation levels it was sized against, gross and net PnL with fees and funding broken out, achieved versus planned R, MAE and MFE, and the balance it left behind. The fills are folded in rather than fetched separately, so one call explains one position end to end.")
+        .Produces<BacktestTradeDetailResponse>()
+        .ProducesProblem(StatusCodes.Status404NotFound);
+
         group.MapGet("/{id:guid}/trades/{tradeId:guid}/executions", async (
             Guid id,
             Guid tradeId,

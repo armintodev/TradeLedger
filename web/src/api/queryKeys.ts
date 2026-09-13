@@ -42,7 +42,10 @@ export const queryKeys = {
   backtestRuns: ['backtest-runs'] as const,
   backtestRunList: (filters: BacktestRunFilters) => ['backtest-runs', 'list', filters] as const,
   backtestRun: (id: string) => ['backtest-runs', id] as const,
-  backtestRunTrades: (id: string, page: number) => ['backtest-runs', id, 'trades', page] as const,
+  backtestRunTrades: (id: string, page: number, pageSize: number) =>
+    ['backtest-runs', id, 'trades', { page, pageSize }] as const,
+  backtestRunTrade: (id: string, tradeId: string) =>
+    ['backtest-runs', id, 'trades', tradeId] as const,
   backtestRunEquity: (id: string) => ['backtest-runs', id, 'equity'] as const,
 
   backtestAccounts: ['backtest-accounts'] as const,

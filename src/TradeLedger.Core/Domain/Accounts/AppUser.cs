@@ -67,6 +67,7 @@ public sealed class AppUser : IdentityUser<Guid>
         if (id.Equals("UTC", StringComparison.OrdinalIgnoreCase))
         {
             TimeZoneId = "UTC";
+
             return;
         }
 
@@ -74,7 +75,8 @@ public sealed class AppUser : IdentityUser<Guid>
         {
             throw new DomainValidationException(
                 nameof(timeZoneId),
-                $"timeZoneId cannot be longer than {MaxTimeZoneIdLength} characters.");
+                $"timeZoneId cannot be longer than {MaxTimeZoneIdLength} characters."
+            );
         }
 
         if (!IsIanaZoneId(id))
@@ -83,7 +85,8 @@ public sealed class AppUser : IdentityUser<Guid>
                 nameof(timeZoneId),
                 $"'{id}' is not an IANA time zone id. Use a form such as 'Asia/Tehran', " +
                 "or 'UTC'. Windows ids like 'Iran Standard Time' are not accepted, because " +
-                "the browser cannot resolve them.");
+                "the browser cannot resolve them."
+            );
         }
 
         TimeZoneId = id;

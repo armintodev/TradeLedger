@@ -5,6 +5,7 @@ import type {
   BacktestAccountResponse,
   BacktestRunResponse,
   BacktestStrategyResponse,
+  BacktestTradeDetailResponse,
   BacktestTradeResponse,
   CreateBacktestAccountRequest,
   EquityCurve,
@@ -24,7 +25,7 @@ import type {
  */
 export const RUN_POLL_INTERVAL_MS = 3000;
 
-/** Trades page but return a bare array, so there is no total to page against. */
+/** The run detail's embedded ledger. The full positions page picks its own. */
 export const TRADES_PAGE_SIZE = 100;
 
 /**
@@ -127,15 +128,39 @@ export function useDeleteBacktestRun() {
   });
 }
 
-export function useBacktestRunTrades(id: string | undefined, page: number) {
+/**
+ * Every position the run opened and closed, oldest first, in the engine's own
+ * sequence. The endpoint pages and carries `total`, so a page count is derived
+ * rather than guessed at.
+ */
+export function useBacktestRunTrades(
+  id: string | undefined,
+  page: number,
+  pageSize: number = TRADES_PAGE_SIZE,
+) {
   return useQuery({
-    queryKey: queryKeys.backtestRunTrades(id ?? '', page),
+    queryKey: queryKeys.backtestRunTrades(id ?? '', page, pageSize),
     queryFn: () =>
-      api.get<BacktestTradeResponse[]>(`/api/backtests/${id}/trades`, {
-        query: { page, pageSize: TRADES_PAGE_SIZE },
+      api.get<PagedResult<BacktestTradeResponse>>(`/api/backtests/${id}/trades`, {
+        query: { page, pageSize },
       }),
     enabled: Boolean(id),
     placeholderData: (previous) => previous,
+  });
+}
+
+/**
+ * One position in full, fills folded in. The list row has everything except the
+ * bar indices, the engine's note and the executions, so this is only worth
+ * fetching when a position is actually opened — never per row.
+ */
+export function useBacktestRunTrade(id: string | undefined, tradeId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.backtestRunTrade(id ?? '', tradeId ?? ''),
+    queryFn: () => api.get<BacktestTradeDetailResponse>(`/api/backtests/${id}/trades/${tradeId}`),
+    enabled: Boolean(id && tradeId),
+    // A finished run's trades are immutable — the engine never rewrites one.
+    staleTime: Infinity,
   });
 }
 

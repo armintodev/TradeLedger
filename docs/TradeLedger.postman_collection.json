@@ -140,6 +140,10 @@
       "key": "interval",
       "value": "OneHour",
       "type": "string"
+    },
+    {
+      "key": "backtestTradeId",
+      "value": ""
     }
   ],
   "item": [
@@ -1910,6 +1914,51 @@
           }
         },
         {
+          "name": "Candles for a range",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/market-data/candles?source=BinanceFutures&symbol={{symbol}}&interval={{interval}}&from=2025-01-01T00:00:00Z&to=2025-02-01T00:00:00Z&maxPoints=1000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "market-data",
+                "candles"
+              ],
+              "query": [
+                {
+                  "key": "source",
+                  "value": "BinanceFutures"
+                },
+                {
+                  "key": "symbol",
+                  "value": "{{symbol}}"
+                },
+                {
+                  "key": "interval",
+                  "value": "{{interval}}"
+                },
+                {
+                  "key": "from",
+                  "value": "2025-01-01T00:00:00Z"
+                },
+                {
+                  "key": "to",
+                  "value": "2025-02-01T00:00:00Z"
+                },
+                {
+                  "key": "maxPoints",
+                  "value": "1000"
+                }
+              ]
+            },
+            "description": "OHLC bars for one source, symbol and interval.\n\n`maxPoints` is a point budget, not a row limit: default 1000, maximum 5000. A range holding more bars than that is aggregated rather than truncated — each returned bar takes the first candle's open, the extremes across its bucket, the last candle's close and the summed volume. Read `total` against `returned`, and `bucketSize`, to see how much was folded together. Truncating instead would silently drop the far end of the range, which is usually where a gap is."
+          }
+        },
+        {
           "name": "Queue a backfill",
           "request": {
             "method": "POST",
@@ -2055,6 +2104,41 @@
               }
             }
           ]
+        },
+        {
+          "name": "Backfill history",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/market-data/backfill?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "market-data",
+                "backfill"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "status",
+                  "value": "Queued",
+                  "disabled": true
+                },
+                {
+                  "key": "symbol",
+                  "value": "{{symbol}}",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Every backfill you have queued, newest first, filterable by status and symbol. `limit` defaults to 50 and is capped at 200.\n\nThis is the record of what was fetched and what failed — a failed job's `error` string is the only account of why."
+          }
         },
         {
           "name": "Cancel backfill",
@@ -2945,7 +3029,7 @@
                 }
               ]
             },
-            "description": "Every simulated position, with its exit reason, how the intrabar ambiguity was resolved, and MAE and MFE in R."
+            "description": "Every simulated position, with its exit reason, how the intrabar ambiguity was resolved, and MAE and MFE in R.\n\nPaged like the runs list: the rows are under `items`, with `total`, `totalPages` and `hasMore` alongside."
           },
           "event": [
             {
@@ -2964,6 +3048,105 @@
                   "            if (id) {",
                   "                pm.collectionVariables.set('backtestRunId', id);",
                   "                if (pm.environment.name) { pm.environment.set('backtestRunId', id); }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get one simulated trade",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/{{backtestRunId}}/trades/{{backtestTradeId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "{{backtestRunId}}",
+                "trades",
+                "{{backtestTradeId}}"
+              ]
+            },
+            "description": "One simulated position in full: when it was opened and closed and how many bars it was held, entry and exit price, the stop, target and liquidation levels it was sized against, gross and net PnL with fees and funding broken out, achieved versus planned R, MAE and MFE, and the balance it left behind.\n\nThe fills are folded in as `executions`, so this one call explains the position end to end."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('backtestTradeId') && pm.variables.get('backtestRunId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/backtests/' + pm.variables.get('backtestRunId') + '/trades?page=1&pageSize=1',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const items = res.json().items;",
+                  "            const id = items && items.length ? items[0].id : null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('backtestTradeId', id);",
+                  "                if (pm.environment.name) {",
+                  "                    pm.environment.set('backtestTradeId', id);",
+                  "                }",
+                  "            }",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Trade executions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/backtests/{{backtestRunId}}/trades/{{backtestTradeId}}/executions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "backtests",
+                "{{backtestRunId}}",
+                "trades",
+                "{{backtestTradeId}}",
+                "executions"
+              ]
+            },
+            "description": "The individual fills behind one simulated trade: an Open plus a Close or Liquidation, each with price, quantity, fee, timestamp and the index of the bar it happened on.\n\nThe engine holds one position at a time with a single entry fill, so today this is always two rows. It is the same shape as the real journal's executions and grows with the engine."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('backtestTradeId') && pm.variables.get('backtestRunId')) {",
+                  "    pm.sendRequest({",
+                  "        url: pm.variables.get('baseUrl') + '/api/backtests/' + pm.variables.get('backtestRunId') + '/trades?page=1&pageSize=1',",
+                  "        method: 'GET',",
+                  "        header: { 'Authorization': 'Bearer ' + pm.variables.get('token') }",
+                  "    }, function (err, res) {",
+                  "        if (!err && res.code === 200) {",
+                  "            const items = res.json().items;",
+                  "            const id = items && items.length ? items[0].id : null;",
+                  "            if (id) {",
+                  "                pm.collectionVariables.set('backtestTradeId', id);",
+                  "                if (pm.environment.name) {",
+                  "                    pm.environment.set('backtestTradeId', id);",
+                  "                }",
                   "            }",
                   "        }",
                   "    });",

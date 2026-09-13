@@ -940,3 +940,31 @@ export interface BacktestTradeResponse {
   mfeR: number | null;
   sourceTradeId: Guid | null;
 }
+
+export interface BacktestExecutionResponse {
+  id: Guid;
+  backtestTradeId: Guid;
+  role: ExecutionRole;
+  price: number;
+  quantity: number;
+  fee: number;
+  notional: number;
+  executedAt: Instant;
+  /** Index of the bar the fill landed on, counted from the run's first bar. */
+  barIndex: number;
+}
+
+/**
+ * The list row plus what a ledger row has no width for: the bars the position
+ * occupied, the engine's own note, and the fills. Only the by-id fetch returns
+ * it — the run's trades list carries `BacktestTradeResponse`.
+ */
+export interface BacktestTradeDetailResponse extends BacktestTradeResponse {
+  backtestRunId: Guid;
+  entryBarIndex: number;
+  exitBarIndex: number;
+  /** True when the bar held both the stop and the target and the worse one was assumed. */
+  exitWasAssumed: boolean;
+  notes: string | null;
+  executions: BacktestExecutionResponse[];
+}

@@ -50,6 +50,12 @@ const RunDetailPage = lazy(() =>
   import('@/features/backtests/runs/RunDetailPage').then((m) => ({ default: m.RunDetailPage })),
 );
 
+const RunPositionsPage = lazy(() =>
+  import('@/features/backtests/runs/RunPositionsPage').then((m) => ({
+    default: m.RunPositionsPage,
+  })),
+);
+
 const StrategyEditorPage = lazy(() =>
   import('@/features/backtests/strategies/StrategyEditorPage').then((m) => ({
     default: m.StrategyEditorPage,
@@ -156,6 +162,16 @@ export const router = createBrowserRouter([
                 element: (
                   <Chunk>
                     <RunDetailPage />
+                  </Chunk>
+                ),
+              },
+              {
+                // Every position the run opened and closed. `trades` rather than
+                // `positions` so the path reads the same as the endpoint behind it.
+                path: 'backtests/runs/:id/trades',
+                element: (
+                  <Chunk>
+                    <RunPositionsPage />
                   </Chunk>
                 ),
               },

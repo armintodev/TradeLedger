@@ -113,6 +113,66 @@ public sealed record BacktestTradeResponse(
         t.MaeR, t.MfeR, t.SourceTradeId);
 }
 
+
+/// The list row plus the parts a ledger view has no room for: the bar indices the
+/// position occupied, the engine's own note, and the fills themselves. Folding the
+/// executions in here rather than leaving them a second round trip is the whole
+/// point of a by-id fetch — a position is explained by when it was entered and on
+/// what, not by a row of totals.
+public sealed record BacktestTradeDetailResponse(
+    Guid Id,
+    Guid BacktestRunId,
+    int Sequence,
+    string Symbol,
+    TradeSide Side,
+    DateTimeOffset OpenedAt,
+    DateTimeOffset? ClosedAt,
+    int EntryBarIndex,
+    int ExitBarIndex,
+    int BarsInTrade,
+    decimal EntryPrice,
+    decimal? ExitPrice,
+    decimal Quantity,
+    int Leverage,
+    decimal PositionMargin,
+    decimal OrderValue,
+    decimal StopLossPrice,
+    decimal TakeProfitPrice,
+    decimal LiquidationPrice,
+    decimal GrossProfitLoss,
+    decimal Fees,
+    decimal Funding,
+    decimal NetProfitLoss,
+    decimal? AchievedReturnR,
+    decimal? PlannedReturnR,
+    decimal? TradeGainPercent,
+    decimal BalanceAfter,
+    TimeSpan? Duration,
+    TradeOutcome Outcome,
+    BacktestExitReason? ExitReason,
+    IntrabarResolution IntrabarResolution,
+    bool ExitWasAssumed,
+    bool WasLiquidated,
+    decimal? MaeR,
+    decimal? MfeR,
+    Guid? SourceTradeId,
+    string? Notes,
+    IReadOnlyList<BacktestExecutionResponse> Executions)
+{
+    public static BacktestTradeDetailResponse From(BacktestTrade t) => new(
+        t.Id, t.BacktestRunId, t.Sequence, t.Symbol, t.Side, t.OpenedAt, t.ClosedAt,
+        t.EntryBarIndex, t.ExitBarIndex, t.BarsInTrade,
+        t.EntryPrice, t.ExitPrice, t.Quantity, t.Leverage, t.PositionMargin, t.OrderValue,
+        t.StopLossPrice, t.TakeProfitPrice, t.LiquidationPrice,
+        t.GrossProfitLoss, t.Fees, t.Funding, t.NetProfitLoss,
+        t.AchievedReturnR, t.PlannedReturnR, t.TradeGainPercent, t.BalanceAfter,
+        t.Duration, t.Outcome, t.ExitReason, t.IntrabarResolution, t.ExitWasAssumed,
+        t.WasLiquidated, t.MaeR, t.MfeR, t.SourceTradeId, t.Notes,
+        [.. t.Executions
+            .OrderBy(e => e.ExecutedAt)
+            .ThenBy(e => e.BarIndex)
+            .Select(BacktestExecutionResponse.From)]);
+}
 public sealed record BacktestExecutionResponse(
     Guid Id,
     Guid BacktestTradeId,

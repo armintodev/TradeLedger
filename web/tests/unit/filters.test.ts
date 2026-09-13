@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PAGE_SIZE,
+  DEFAULT_POSITION_PAGE_SIZE,
   MAX_PAGE_SIZE,
+  MAX_POSITION_PAGE_SIZE,
   hasTradeFilters,
   rangeBounds,
   readAnalyticsFilters,
+  readRunPositionFilters,
   readTradeFilters,
   writeAnalyticsFilters,
+  writeRunPositionFilters,
   writeTradeFilters,
 } from '@/lib/filters';
 
@@ -109,5 +113,37 @@ describe('analytics filters', () => {
 
   it('leaves "all" unbounded', () => {
     expect(rangeBounds('all')).toEqual({});
+  });
+});
+
+describe('run position filters', () => {
+  it('round-trips through the query string', () => {
+    const filters = {
+      page: 4,
+      pageSize: 250,
+      position: 'e9a1b0c4-0000-4000-8000-00000000000a',
+    };
+
+    expect(readRunPositionFilters(writeRunPositionFilters(filters))).toEqual(filters);
+  });
+
+  it('omits defaults so a plain positions link stays clean', () => {
+    const params = writeRunPositionFilters({ page: 1, pageSize: DEFAULT_POSITION_PAGE_SIZE });
+
+    expect(params.toString()).toBe('');
+  });
+
+  it('clamps pageSize to what the endpoint accepts', () => {
+    const filters = readRunPositionFilters(new URLSearchParams('pageSize=5000'));
+
+    expect(filters.pageSize).toBe(MAX_POSITION_PAGE_SIZE);
+  });
+
+  it('falls back to page one on a junk page', () => {
+    expect(readRunPositionFilters(new URLSearchParams('page=-2')).page).toBe(1);
+  });
+
+  it('reads no open position when the parameter is absent', () => {
+    expect(readRunPositionFilters(new URLSearchParams()).position).toBeUndefined();
   });
 });

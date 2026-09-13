@@ -135,8 +135,11 @@ Policy:
 
 - `POST /api/backtests` refuses to queue a run whose range has gaps, in the run
   interval **or** the drill-down interval.
-- `BacktestRun.AllowGaps` overrides it; the result is then stamped
-  `DataQuality = Gapped` and must be displayed as such.
+- `BacktestRun.AllowGaps` overrides it. The queue endpoint looks for gaps either
+  way and calls `run.MarkDataQuality(Gapped)` only when it found some, so
+  `AllowGaps` says what was permitted and `DataQuality` says what was there. A run
+  stamped `Gapped` really did cross a hole and must be displayed as such; one with
+  `allowGaps: true` over complete data stays `Clean`.
 - Missing **drill-down** candles are not a hard failure. They degrade fill
   resolution to the pessimistic assumption, recorded per trade as
   `AssumedNoMinuteData`.
@@ -229,7 +232,9 @@ resolution falls back to the canonical name when no row exists.
 |---|---|---|
 | `GET` | `/api/market-data/coverage` | What is stored, per source/symbol/interval |
 | `GET` | `/api/market-data/gaps` | Missing candles in a range |
+| `GET` | `/api/market-data/candles` | OHLC bars, aggregated past the point budget |
 | `POST` | `/api/market-data/backfill` | Queue a Binance fetch, returns `202` |
+| `GET` | `/api/market-data/backfill` | Backfill history, newest first |
 | `GET` | `/api/market-data/backfill/{id}` | Job status and progress |
 | `POST` | `/api/market-data/backfill/{id}/cancel` | Stop at the next chunk boundary |
 | `POST` | `/api/market-data/import` | CSV upload |
@@ -238,3 +243,22 @@ resolution falls back to the canonical name when no row exists.
 Backfill runs in `TradeLedger.Worker` (`MarketDataWorker`), one job at a time
 under a Redis lock, fetching in 30-day chunks and writing progress after each.
 Candles already written by a cancelled job are kept — they are valid on their own.
+A job cancelled while still **queued** goes straight to `Cancelled` rather than
+waiting: the worker's pickup query skips a job whose cancellation was requested,
+so nothing would ever move it off `Queued`. `cancellationRequested` is on the
+response either way, so a job winding down is distinguishable from a stuck one.
+
+`GET /candles` has a point budget rather than a row limit — `maxPoints`, default
+1000 and capped at 5000. Past it the range is **aggregated, not truncated**: each
+returned bar carries the first stored candle's open, the extremes across its
+bucket, the last candle's close and the summed volume, with `bucketSize` saying
+how many candles it covers and `total` how many were in the range. Truncating
+would silently drop the far end, which is where a gap usually is; returning every
+row would mean half a million of them to paint 800 pixels.
+
+The CSV upload's ceiling is `MarketData:MaxImportBytes`. `Program.cs` raises
+Kestrel's own request body limit — which defaults to about 30 MB, under the
+configured 50 — to `MaxRequestBodyBytes`, that figure plus
+`MultipartHeadroomBytes` for the multipart envelope. Without it a file in between
+is refused by the server before the endpoint runs, as an opaque
+`malformed_request` rather than the field-keyed error written for it.

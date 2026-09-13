@@ -1,57 +1,55 @@
 import { useState } from 'react';
-import { Button, Card, Group, Stack, Table, Text, Title } from '@mantine/core';
-import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
+import { Button, Card, Group, Pagination, Stack, Table, Text, Title } from '@mantine/core';
+import { IconArrowRight } from '@tabler/icons-react';
+import { useNavigate } from 'react-router';
 import { TRADES_PAGE_SIZE, useBacktestRunTrades } from '@/api/queries/backtests';
 import { ExitReasonBadge, OutcomeBadge, ResolutionBadge, SideBadge } from '@/components/Badges';
 import { Duration } from '@/components/Duration';
 import { Instant } from '@/components/Instant';
 import { Money, Pnl, Price, Quantity, RMultiple } from '@/components/Money';
 import { EmptyState, ErrorState, LoadingTable } from '@/components/States';
+import { formatInteger } from '@/lib/format';
 
 /**
- * The endpoint pages but returns a bare array with no total, so a page count
- * cannot be derived and a normal pagination control is impossible. Next is
- * disabled as soon as a page comes back short. No total is displayed, because
- * none can be known. See `docs/backtest-impl.md` §8.
+ * The run's ledger, inline. Paging state is local because this is a panel inside
+ * a page that already owns the query string; the full positions view at
+ * `/backtests/runs/:id/trades` is the one that keeps its page in the URL.
  */
 export function RunTradesTable({ runId }: { runId: string }) {
+  const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const trades = useBacktestRunTrades(runId, page);
 
-  const items = trades.data ?? [];
-  const atEnd = items.length < TRADES_PAGE_SIZE;
+  const items = trades.data?.items ?? [];
+  const total = trades.data?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / TRADES_PAGE_SIZE));
+
+  /** Opening a position hands off to the full view, which can give it room. */
+  function open(tradeId: string) {
+    void navigate(`/backtests/runs/${runId}/trades?position=${tradeId}`);
+  }
 
   return (
     <Card padding="md">
       <Stack gap="sm">
         <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm">
-          <Title order={5}>Simulated trades</Title>
-
-          {(page > 1 || !atEnd) && (
-            <Group gap="xs">
-              <Button
-                size="compact-xs"
-                variant="light"
-                leftSection={<IconChevronLeft size={13} />}
-                disabled={page === 1 || trades.isFetching}
-                onClick={() => setPage((current) => Math.max(1, current - 1))}
-              >
-                Previous
-              </Button>
+          <Stack gap={2}>
+            <Title order={5}>Simulated trades</Title>
+            {trades.data && (
               <Text size="xs" c="dimmed">
-                Page {page}
+                {formatInteger(total)} position{total === 1 ? '' : 's'} opened and closed.
               </Text>
-              <Button
-                size="compact-xs"
-                variant="light"
-                rightSection={<IconChevronRight size={13} />}
-                disabled={atEnd || trades.isFetching}
-                onClick={() => setPage((current) => current + 1)}
-              >
-                Next
-              </Button>
-            </Group>
-          )}
+            )}
+          </Stack>
+
+          <Button
+            size="compact-sm"
+            variant="light"
+            rightSection={<IconArrowRight size={14} />}
+            onClick={() => void navigate(`/backtests/runs/${runId}/trades`)}
+          >
+            Every position
+          </Button>
         </Group>
 
         {trades.isError && (
@@ -62,12 +60,8 @@ export function RunTradesTable({ runId }: { runId: string }) {
 
         {trades.data && items.length === 0 && (
           <EmptyState
-            title={page > 1 ? 'No more trades' : 'No trades'}
-            description={
-              page > 1
-                ? 'That was the last page.'
-                : 'The rules never fired over this range, or every signal was skipped. The engine counters above say which.'
-            }
+            title="No trades"
+            description="The rules never fired over this range, or every signal was skipped. The engine counters above say which."
           />
         )}
 
@@ -78,6 +72,7 @@ export function RunTradesTable({ runId }: { runId: string }) {
                 <Table.Tr>
                   <Table.Th>#</Table.Th>
                   <Table.Th>Opened</Table.Th>
+                  <Table.Th>Closed</Table.Th>
                   <Table.Th>Side</Table.Th>
                   <Table.Th ta="right">Entry</Table.Th>
                   <Table.Th ta="right">Exit</Table.Th>
@@ -93,7 +88,11 @@ export function RunTradesTable({ runId }: { runId: string }) {
               </Table.Thead>
               <Table.Tbody>
                 {items.map((trade) => (
-                  <Table.Tr key={trade.id}>
+                  <Table.Tr
+                    key={trade.id}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => open(trade.id)}
+                  >
                     <Table.Td>
                       <Text size="xs" c="dimmed">
                         {trade.sequence}
@@ -101,6 +100,9 @@ export function RunTradesTable({ runId }: { runId: string }) {
                     </Table.Td>
                     <Table.Td>
                       <Instant value={trade.openedAt} />
+                    </Table.Td>
+                    <Table.Td>
+                      <Instant value={trade.closedAt} />
                     </Table.Td>
                     <Table.Td>
                       <SideBadge side={trade.side} />
@@ -140,6 +142,12 @@ export function RunTradesTable({ runId }: { runId: string }) {
               </Table.Tbody>
             </Table>
           </Table.ScrollContainer>
+        )}
+
+        {pageCount > 1 && (
+          <Group justify="flex-end">
+            <Pagination value={page} onChange={setPage} total={pageCount} size="sm" />
+          </Group>
         )}
       </Stack>
     </Card>

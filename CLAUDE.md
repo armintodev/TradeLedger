@@ -460,8 +460,10 @@ npm run api:types
 ### Backtests and market data in the UI
 
 `/backtests` holds four tabs — Runs, Accounts, Strategies and Market data — plus
-the rule builder at `/backtests/strategies/:id` and the run detail at
-`/backtests/runs/:id`. Three things about it are worth knowing before changing
+the rule builder at `/backtests/strategies/:id`, the run detail at
+`/backtests/runs/:id` and every position that run opened and closed at
+`/backtests/runs/:id/trades`, where `?position=<id>` opens one of them in full,
+fills included. Three things about it are worth knowing before changing
 anything there:
 
 - **The rule document is modelled by family, not by wire shape.** On the wire the
@@ -528,7 +530,7 @@ foreign-key violation (23503) → 400.
 ### Postman
 
 `docs/TradeLedger.postman_collection.json` and
-`docs/TradeLedger.postman_environment.json` — 77 requests in 12 folders,
+`docs/TradeLedger.postman_environment.json` — 78 requests in 12 folders,
 collection-level bearer auth, and scripts that capture ids as you go.
 
 Import both, set `password` in the environment, run **Auth > Login**; the token

@@ -206,6 +206,47 @@ export function hasRunFilters(filters: BacktestRunFilters): boolean {
   return Boolean(filters.accountId || filters.status);
 }
 
+export const DEFAULT_POSITION_PAGE_SIZE = 100;
+export const MAX_POSITION_PAGE_SIZE = 500;
+
+export interface RunPositionFilters {
+  page: number;
+  pageSize: number;
+  /**
+   * The position whose detail panel is open. It lives in the URL rather than in
+   * component state so a single simulated position is linkable — the whole point
+   * of the page is being able to point at one trade and ask what the engine did.
+   */
+  position?: string;
+}
+
+export function readRunPositionFilters(params: URLSearchParams): RunPositionFilters {
+  return {
+    page: positiveInt(params.get('page'), 1),
+    pageSize: Math.min(
+      positiveInt(params.get('pageSize'), DEFAULT_POSITION_PAGE_SIZE),
+      MAX_POSITION_PAGE_SIZE,
+    ),
+    position: params.get('position') ?? undefined,
+  };
+}
+
+export function writeRunPositionFilters(filters: RunPositionFilters): URLSearchParams {
+  const params = new URLSearchParams();
+
+  if (filters.page > 1) {
+    params.set('page', String(filters.page));
+  }
+
+  if (filters.pageSize !== DEFAULT_POSITION_PAGE_SIZE) {
+    params.set('pageSize', String(filters.pageSize));
+  }
+
+  set(params, 'position', filters.position);
+
+  return params;
+}
+
 export const RANGE_LABELS: Record<RangePreset, string> = {
   '7d': '7 days',
   '30d': '30 days',

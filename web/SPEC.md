@@ -49,7 +49,7 @@ These are deliberately excluded. Each is a later cycle, not an oversight.
 | **Backtests screens** (`/api/backtests/**`) | Rule-document editing and run analysis are their own product surface, comparable in size to the journal. |
 | **Market Data screens** (`/api/market-data/**`) | Candle coverage, gap management and CSV import are a prerequisite for backtests, so they ship with them. |
 | **Attachments / screenshots** | No endpoint accepts or serves file bytes. The `attachments` array in `TradeDetailResponse` is ignored entirely — no preview, no metadata list, no upload control. |
-| **Editing profile or account settings** | No write endpoint exists for `TimeZoneId`, `StartingBalance`, `DefaultRiskPerTrade`, or for renaming/deactivating an `Account`. These render read-only. |
+| **Editing profile or account settings** | No write endpoint exists for `StartingBalance`, `DefaultRiskPerTrade`, or for renaming/deactivating an `Account`. These render read-only. `TimeZoneId` is now writable through `PUT /api/auth/me/timezone`, but no screen offers it yet. |
 | **Editing or manually linking a plan** | The API offers create, list, abandon and calculate only. |
 | **Signup, password reset, user management** | Public signup is disabled by design; the owner account is seeded at startup. |
 | **Real-time updates** | No WebSocket track exists in the backend. Liveness is polling-only, and only while a sync run is active. |

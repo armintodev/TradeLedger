@@ -277,22 +277,19 @@ with nothing in it.
 
 ---
 
-## 8. `GET /api/backtests/{id}/trades` pages but has no total — nit
+## 8. `GET /api/backtests/{id}/trades` pages but has no total — done
 
-**Problem.** The endpoint accepts `page` and `pageSize` (default 100, clamped
-1–500) and returns a **bare `List<BacktestTradeResponse>`**. The runs list, one
-file over, returns `PagedResult<BacktestRunResponse>` with `total`, `totalPages`
-and `hasMore`.
+**Was.** The endpoint accepted `page` and `pageSize` (default 100, clamped
+1–500) but returned a bare `List<BacktestTradeResponse>`. Without a total a page
+count cannot be derived, so the client could only offer Next/Previous with Next
+disabled once a page came back short, and could display no total at all.
 
-Without a total, a page count cannot be derived, so a normal pagination control
-is impossible.
+**Now.** It returns `PagedResult<BacktestTradeResponse>`, matching
+`ListBacktestRuns`, and `PagedResult` computes `TotalPages` and `HasMore`.
 
-**Change.** Return `PagedResult<BacktestTradeResponse>`, matching
-`ListBacktestRuns`. `PagedResult` already computes `TotalPages` and `HasMore`.
-
-**Frontend workaround in place:** Next/Previous buttons, with Next disabled when a
-page comes back shorter than `pageSize`. No total is displayed, because none can
-be known.
+The workaround is retired. `RunTradesTable` and the positions page at
+`/backtests/runs/:id/trades` both page against the real total, and the run's
+trade count is now stated rather than left unknowable.
 
 ---
 
@@ -331,20 +328,23 @@ below Kestrel's default, not at the configured 50 MB — and handles
 
 ---
 
-## 10. `BacktestExecution` rows have no endpoint — deferred
+## 10. `BacktestExecution` rows have no endpoint — done
 
 **Problem.** The engine writes two `BacktestExecution` rows per simulated trade
 (`Open` plus `Close` or `Liquidation`) with price, quantity, fee, timestamp and
-bar index. Nothing exposes them.
+bar index. Nothing exposed them.
 
 The real journal has the same entity and the same story — `Execution` is what
 makes scale-ins and partial closes representable — and `TradeDetailResponse`
-returns them. The backtest side persists them and stops.
+returns them. The backtest side persisted them and stopped.
 
-**Change, when picked up.** `GET /api/backtests/{id}/trades/{tradeId}/executions`,
-or fold an `executions` array into a by-id trade endpoint. Low value while the
-engine takes one position at a time with a single entry fill; worth more if
-partial exits ever land.
+**Change, as shipped.** Both halves of the suggestion, because they answer
+different questions. `GET /api/backtests/{id}/trades/{tradeId}/executions`
+returns the fills alone, and `GET /api/backtests/{id}/trades/{tradeId}` returns
+the position in full — bar indices, the engine's note and the fills folded in as
+`executions` — so a single position is explained without a second round trip.
+The list at `GET /api/backtests/{id}/trades` is still the ledger view: every
+position of a run with its open and close instants, paged.
 
 ---
 
@@ -357,8 +357,8 @@ partial exits ever land.
 3. **§7 error envelope** — a few lines each, removes two client special cases.
 4. **§3 `cancellationRequested`** — one field; makes a stuck job explicable.
 5. **§9 import size limits** — configuration, not code, but it is a real trap.
-6. **§8 paged trades** — one line, matches the sibling endpoint.
+6. **§8 paged trades** — done: `PagedResult`, matching the sibling endpoint.
 7. **§2 backfill list** — turns backfill history from per-browser into real data.
 8. **§4 run `ruleJson`** — makes an old result explainable, as intended.
 9. **§6 candle GET** — the largest, and the one that unlocks charting.
-10. **§10 executions** — only if partial exits land.
+10. **§10 executions** — done: fills alone, plus a by-id trade that folds them in.
