@@ -1,8 +1,3 @@
-using Microsoft.AspNetCore.Identity;
-using Microsoft.AspNetCore.Mvc;
-using TradeLedger.Api.Shared;
-using TradeLedger.Core.Domain;
-
 namespace TradeLedger.Api.Features.Auth;
 
 public sealed record LoginResponse(
@@ -19,3 +14,5 @@ public sealed record MeResponse(
     DateTimeOffset? JournalStartedAt,
     decimal? DefaultRiskPerTrade,
     string TimeZoneId);
+
+public sealed record TimeZoneResponse(string TimeZoneId);

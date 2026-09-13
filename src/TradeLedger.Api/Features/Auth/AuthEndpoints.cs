@@ -1,8 +1,11 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using TradeLedger.Api.Shared;
 using TradeLedger.Api.Shared.Errors;
 using TradeLedger.Core.Domain;
+using TradeLedger.Core.Persistence;
+using TradeLedger.Core.Shared;
 
 namespace TradeLedger.Api.Features.Auth;
 
@@ -65,6 +68,31 @@ public static class AuthEndpoints
         .WithSummary("Current user profile")
         .WithDescription("The signed-in user plus their journal baseline: starting balance, journal start date, default risk per trade and display time zone. Everything is stored UTC; the time zone is for display only.")
         .Produces<MeResponse>()
+        .RequireAuthorization();
+
+        group.MapPut("/me/timezone", async (
+            [FromBody] SetTimeZoneRequest request,
+            TradeLedgerDbContext db,
+            IUserContext userContext,
+            CancellationToken ct) =>
+        {
+            var userId = userContext.UserId ?? throw new NotAuthenticatedException();
+
+            var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct)
+                ?? throw new ResourceNotFoundException("User", userId);
+
+            user.SetTimeZone(request.TimeZoneId);
+
+            await db.SaveChangesAsync(ct);
+
+            return Results.Ok(new TimeZoneResponse(user.TimeZoneId));
+        })
+        .WithName("SetCurrentUserTimeZone")
+        .WithSummary("Set the display time zone")
+        .WithDescription("Changes the zone every instant is rendered in. This is display only: instants stay UTC in the database and on the wire, so no journal, candle or backtest data moves. Takes an IANA id such as 'Asia/Tehran', or 'UTC'. Windows ids like 'Iran Standard Time' are refused, because the browser resolves this value through Intl.DateTimeFormat and cannot read them. The id is validated by shape, not against the host's time zone database, so the same request is accepted on every platform. Re-read GET /api/auth/me, or sign in again, for the new value to take effect.")
+        .Produces<TimeZoneResponse>()
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status404NotFound)
         .RequireAuthorization();
     }
 }

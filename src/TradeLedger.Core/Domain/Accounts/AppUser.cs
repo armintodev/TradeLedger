@@ -5,6 +5,8 @@ namespace TradeLedger.Core.Domain;
 
 public sealed class AppUser : IdentityUser<Guid>
 {
+    public const int MaxTimeZoneIdLength = 64;
+
     private readonly List<Account> _accounts = [];
 
     public string? DisplayName { get; private set; }
@@ -60,7 +62,59 @@ public sealed class AppUser : IdentityUser<Guid>
 
     public void SetTimeZone(string timeZoneId)
     {
-        TimeZoneId = Guard.NotBlank(timeZoneId, nameof(timeZoneId));
+        var id = Guard.NotBlank(timeZoneId, nameof(timeZoneId));
+
+        if (id.Equals("UTC", StringComparison.OrdinalIgnoreCase))
+        {
+            TimeZoneId = "UTC";
+            return;
+        }
+
+        if (id.Length > MaxTimeZoneIdLength)
+        {
+            throw new DomainValidationException(
+                nameof(timeZoneId),
+                $"timeZoneId cannot be longer than {MaxTimeZoneIdLength} characters.");
+        }
+
+        if (!IsIanaZoneId(id))
+        {
+            throw new DomainValidationException(
+                nameof(timeZoneId),
+                $"'{id}' is not an IANA time zone id. Use a form such as 'Asia/Tehran', " +
+                "or 'UTC'. Windows ids like 'Iran Standard Time' are not accepted, because " +
+                "the browser cannot resolve them.");
+        }
+
+        TimeZoneId = id;
+    }
+
+    private static bool IsIanaZoneId(string id)
+    {
+        var segments = id.Split('/');
+
+        if (segments.Length < 2)
+        {
+            return false;
+        }
+
+        foreach (var segment in segments)
+        {
+            if (segment.Length == 0 || !char.IsAsciiLetter(segment[0]))
+            {
+                return false;
+            }
+
+            foreach (var character in segment)
+            {
+                if (!char.IsAsciiLetterOrDigit(character) && character is not ('_' or '-' or '+'))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     public ProxyEndpoint? CurrentProxy() =>

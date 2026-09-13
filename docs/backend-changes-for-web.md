@@ -203,21 +203,49 @@ the analytics page renders no caveat.
 
 ---
 
-## 3. Write endpoints for profile and account settings — deferred
+## 3. Write endpoints for profile and account settings — partly done
 
-**Problem.** `GET /api/auth/me` returns `StartingBalance`, `JournalStartedAt`,
-`DefaultRiskPerTrade` and `TimeZoneId`, and `GET /api/accounts` returns `Name`,
-`IsActive` and `TrackedFrom` — none of which any endpoint can change. The
-frontend renders all of them read-only with an apologetic note.
+**`timeZoneId` is done.** `PUT /api/auth/me/timezone` takes `{ "timeZoneId": "Asia/Tehran" }`
+and returns the stored value. It sits in the `Auth` slice beside `GET /api/auth/me`
+rather than under a new `/api/me` group, so the profile's read and its one write
+stay on the same path.
 
-`TimeZoneId` is the one that stings: every instant in the UI is formatted with
-it, and the only way to change it is a manual `UPDATE` against Postgres.
+**It is not validated with `TimeZoneInfo`,** which is what this section used to
+call for. The solution builds with `InvariantGlobalization=true`
+(`Directory.Build.props`), and under it `TimeZoneInfo` has no ICU data to work
+from. Measured on the Windows dev host:
+
+| Call | Result under invariant globalization |
+|---|---|
+| `TryFindSystemTimeZoneById("Asia/Tehran")` | **false** |
+| `TryFindSystemTimeZoneById("Iran Standard Time")` | true |
+| `TryConvertWindowsIdToIanaId("Iran Standard Time")` | **false**, no output |
+
+On Linux it inverts — IANA ids resolve from `/usr/share/zoneinfo`, Windows ids do
+not — so the same request would be accepted on one host and refused on another.
+The server never resolves the zone anyway; the browser does, through
+`Intl.DateTimeFormat`. So `AppUser.SetTimeZone` validates the *shape* of an IANA
+id (`Area/Location`, allowing `America/Argentina/Buenos_Aires`, `Etc/GMT+5`,
+`America/Port-au-Prince`) and accepts `UTC`, which is platform-independent and
+matches what the client can actually consume. Windows ids are refused with a
+message saying why.
+
+If strict validation against the real tz database is ever wanted, it needs ICU:
+set `InvariantGlobalization=false` for the API **and** pin
+`CultureInfo.DefaultThreadCurrentCulture` to invariant at startup, or the app
+starts honouring the host's locale for number formatting — the exact hazard
+`CLAUDE.md` §6 warns about.
+
+**Problem, for the rest.** `GET /api/auth/me` also returns `StartingBalance`,
+`JournalStartedAt` and `DefaultRiskPerTrade`, and `GET /api/accounts` returns
+`Name`, `IsActive` and `TrackedFrom` — none of which any endpoint can change. The
+frontend renders those read-only with an apologetic note.
 
 **Change, when picked up.**
 
 | Endpoint | Body | Notes |
 |---|---|---|
-| `PATCH /api/auth/me` | `displayName`, `startingBalance`, `journalStartedAt`, `defaultRiskPerTrade`, `timeZoneId` | Validate `timeZoneId` against `TimeZoneInfo.FindSystemTimeZoneById`; reject with `DomainValidationException` on the `timeZoneId` field. |
+| `PATCH /api/auth/me` | `displayName`, `startingBalance`, `journalStartedAt`, `defaultRiskPerTrade` | `timeZoneId` already has its own endpoint; fold it in here only if the whole profile becomes one form. |
 | `PATCH /api/accounts/{id}` | `name`, `isActive`, `trackedFrom` | Never `kind`, `venue` or `quoteAsset` — changing those retroactively invalidates every synced row. |
 
 Both go through intention-revealing methods on the aggregates
