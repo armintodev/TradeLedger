@@ -297,11 +297,23 @@ src/
 tests/
   TradeLedger.UnitTests/          signer, domain rules, calculations, indicators, rules engine
   TradeLedger.IntegrationTests/   tenancy, idempotency, precision, transactions (Testcontainers)
+web/                       React + TypeScript SPA, its own toolchain, not in the .slnx
+  SPEC.md                  the implementation spec this was built from
+  src/
+    api/                   wire types, fetch wrapper, ProblemDetails mapping, query hooks
+    auth/                  token storage, provider, route guard
+    components/            shell and the shared Money / Pnl / Instant / Duration primitives
+    features/              one folder per screen, mirroring the API's slices
+    lib/                   formatting, TimeSpan parsing, URL filters, theme, toasts
+  tests/
+    unit/                  Vitest + RTL, MSW for the API
+    e2e/                   Playwright — the review loop
 docs/
   excel-journal-reference.md
   bitunix-api.md
   market-data.md
-compose.yaml               postgres + redis for local dev
+  backend-changes-for-web.md   what the frontend needed, and what is still open
+compose.yaml               postgres + redis + web for local dev
 ```
 
 Each `Features/<Feature>/` folder holds three files: `XxxEndpoints.cs`,
@@ -314,8 +326,27 @@ reference the web project would drag the whole ASP.NET stack into a background
 service. Vertical slices still hold where they matter — the feature folders under
 `Api/Features/` each own their endpoints, handlers and DTOs.
 
-The frontend is a later cycle. Keep the API frontend-agnostic — no view-shaped
-endpoints, no HTML concerns.
+**The frontend lives in `web/` and stays at arm's length.** It is a separate
+deployable on a separate origin, talking to the API over CORS with a bearer
+token. Keep the API frontend-agnostic: no view-shaped endpoints, no HTML
+concerns, no DTO reshaped to suit a screen. If a screen needs data in a
+different shape, the screen composes it.
+
+`web/` is not part of `TradeLedger.slnx` and `dotnet build` never touches it —
+`src/` means "in the solution", and a Node project is not. Its spec is
+[`web/SPEC.md`](web/SPEC.md); the backend gaps it works around are recorded in
+[`docs/backend-changes-for-web.md`](docs/backend-changes-for-web.md).
+
+Three properties of the wire format that the client has to handle, and that a
+change to the API must not break silently:
+
+- **`TimeSpan` is a string** — `"02:14:33"`, or `"1.03:20:00"` past a day.
+  `new Date()` misreads the second form as a date in 2001 without erroring, so
+  the client parses it itself.
+- **`decimal` is a JSON number**, so it arrives as float64. Safe only because
+  the client never does money arithmetic — every aggregate is computed here.
+- **A `[Flags]` enum is a comma-joined string** — `MarketSession` arrives as
+  `"Tokyo, London"`.
 
 ---
 
@@ -384,6 +415,42 @@ Tests — integration tests need Docker running for Testcontainers:
 
 ```bash
 dotnet test
+```
+
+### The frontend
+
+`web/` is a Vite SPA with its own toolchain. It needs the API running in
+Development, because `Cors:AllowedOrigins` is empty in `appsettings.json` and
+only `appsettings.Development.json` allows the dev server's origin.
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+That serves <http://localhost:5173> against `VITE_API_BASE_URL` from `web/.env`
+(copy `web/.env.example`). **`VITE_*` variables are inlined at build time, not
+read at runtime** — changing the API origin means rebuilding, which is why
+`compose.yaml` passes it as a build argument rather than an environment
+variable.
+
+```bash
+npm run test          # Vitest + React Testing Library, MSW for the API
+npm run lint
+npm run build         # tsc -b, then the production bundle
+npm run e2e           # Playwright: the review loop, against a real API and database
+```
+
+`npm run e2e` needs `E2E_EMAIL` and `E2E_PASSWORD` set to the seeded owner and at
+least one unreviewed closed trade; it skips rather than fails when either is
+missing.
+
+Regenerate the API types after any contract change, with the API running in
+Development — the OpenAPI document is not served in Production:
+
+```bash
+npm run api:types
 ```
 
 New migration after a model change:

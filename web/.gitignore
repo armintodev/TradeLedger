@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+.vite/
+playwright-report/
+test-results/
+.env
+.env.local
+
+# The root .gitignore excludes package-lock.json because newman runs via npx.
+# The frontend is a real Node project and its lockfile is part of the build.
+!package-lock.json
