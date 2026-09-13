@@ -304,15 +304,19 @@ web/                       React + TypeScript SPA, its own toolchain, not in the
     auth/                  token storage, provider, route guard
     components/            shell and the shared Money / Pnl / Instant / Duration primitives
     features/              one folder per screen, mirroring the API's slices
+      backtests/           runs, accounts, strategies, the rule builder, market data
     lib/                   formatting, TimeSpan parsing, URL filters, theme, toasts
+      rules/               the rule document: draft model, serialiser, parser, validator
+      marketData.ts        interval vocabulary, range conversion, gap → backfill window
   tests/
     unit/                  Vitest + RTL, MSW for the API
-    e2e/                   Playwright — the review loop
+    e2e/                   Playwright — the review loop and the backtest loop
 docs/
   excel-journal-reference.md
   bitunix-api.md
   market-data.md
   backend-changes-for-web.md   what the frontend needed, and what is still open
+  backtest-impl.md             the same, for the backtest and market-data screens
 compose.yaml               postgres + redis + web for local dev
 ```
 
@@ -452,6 +456,33 @@ Development — the OpenAPI document is not served in Production:
 ```bash
 npm run api:types
 ```
+
+### Backtests and market data in the UI
+
+`/backtests` holds four tabs — Runs, Accounts, Strategies and Market data — plus
+the rule builder at `/backtests/strategies/:id` and the run detail at
+`/backtests/runs/:id`. Three things about it are worth knowing before changing
+anything there:
+
+- **The rule document is modelled by family, not by wire shape.** On the wire the
+  child key differs per operator (`operands`, `operand`, `left`/`right`,
+  `left`/`low`/`high`), and `RisingFor.operand` is a *value* while `Not.operand`
+  is a *condition*. `lib/rules/types.ts` gives each family its own field names so
+  that confusion is unrepresentable, and `lib/rules/serialise.ts` is the only
+  file that knows the wire key names. Keep it that way.
+- **The serialiser emits the compact forms on purpose.** `RuleDocumentParser.CanonicalHash`
+  hashes the document's structure, so key order and whitespace are free — but
+  expanding a bare number into `{"const": n}`, or adding an explicit
+  `"offset": 0`, changes the hash that identifies which rule a finished run used.
+  A document pasted into the JSON tab is saved exactly as typed for the same
+  reason.
+- **A gap's `to` is the open time of its last missing bar**, so backfilling one
+  verbatim is refused as an empty window. `backfillWindowFor` adds one interval;
+  use it rather than passing a gap straight through.
+
+Getting candle data in needs either an egress proxy (backfill goes to Binance
+through the same per-user proxy as Bitunix and fails closed without one) or a
+CSV import, which needs no network and is the offline path for development.
 
 New migration after a model change:
 

@@ -1,5 +1,6 @@
 import type { MarketSessionFlag, ReviewState } from '@/api/types';
 import { toDateString } from './time';
+import type { BacktestRunFilters } from '@/api/queryKeys';
 
 /**
  * Filters live in the URL query string, so a filtered view is linkable and
@@ -154,6 +155,55 @@ export function rangeBounds(
   }
 
   return { from: toDateString(from), to: undefined };
+}
+
+// ---------------------------------------------------------------- backtests
+
+const RUN_STATUSES = ['Queued', 'Running', 'Succeeded', 'Failed', 'Cancelled'] as const;
+
+export type RunStatus = (typeof RUN_STATUSES)[number];
+
+export const DEFAULT_RUN_PAGE_SIZE = 50;
+
+export function readRunFilters(params: URLSearchParams): BacktestRunFilters {
+  return {
+    accountId: params.get('accountId') ?? undefined,
+    status: oneOf<RunStatus>(params.get('status'), [...RUN_STATUSES]),
+    page: positiveInt(params.get('page'), 1),
+    pageSize: Math.min(positiveInt(params.get('pageSize'), DEFAULT_RUN_PAGE_SIZE), 200),
+  };
+}
+
+/**
+ * The runs list lives behind `?tab=runs`, so its filters have to be written
+ * alongside the tab rather than replacing the whole query string.
+ */
+export function writeRunFilters(
+  filters: BacktestRunFilters,
+  existing: URLSearchParams,
+): URLSearchParams {
+  const params = new URLSearchParams(existing);
+
+  for (const key of ['accountId', 'status', 'page', 'pageSize']) {
+    params.delete(key);
+  }
+
+  set(params, 'accountId', filters.accountId);
+  set(params, 'status', filters.status);
+
+  if (filters.page > 1) {
+    params.set('page', String(filters.page));
+  }
+
+  if (filters.pageSize !== DEFAULT_RUN_PAGE_SIZE) {
+    params.set('pageSize', String(filters.pageSize));
+  }
+
+  return params;
+}
+
+export function hasRunFilters(filters: BacktestRunFilters): boolean {
+  return Boolean(filters.accountId || filters.status);
 }
 
 export const RANGE_LABELS: Record<RangePreset, string> = {

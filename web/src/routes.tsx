@@ -38,6 +38,24 @@ const SettingsPage = lazy(() =>
   import('@/features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })),
 );
 
+const BacktestsPage = lazy(() =>
+  import('@/features/backtests/BacktestsPage').then((m) => ({ default: m.BacktestsPage })),
+);
+
+const QueueRunPage = lazy(() =>
+  import('@/features/backtests/runs/QueueRunPage').then((m) => ({ default: m.QueueRunPage })),
+);
+
+const RunDetailPage = lazy(() =>
+  import('@/features/backtests/runs/RunDetailPage').then((m) => ({ default: m.RunDetailPage })),
+);
+
+const StrategyEditorPage = lazy(() =>
+  import('@/features/backtests/strategies/StrategyEditorPage').then((m) => ({
+    default: m.StrategyEditorPage,
+  })),
+);
+
 function Chunk({ children }: { children: ReactNode }) {
   return (
     <Suspense
@@ -114,6 +132,46 @@ export const router = createBrowserRouter([
                 element: (
                   <Chunk>
                     <SettingsPage />
+                  </Chunk>
+                ),
+              },
+              {
+                path: 'backtests',
+                element: (
+                  <Chunk>
+                    <BacktestsPage />
+                  </Chunk>
+                ),
+              },
+              {
+                path: 'backtests/runs/new',
+                element: (
+                  <Chunk>
+                    <QueueRunPage />
+                  </Chunk>
+                ),
+              },
+              {
+                path: 'backtests/runs/:id',
+                element: (
+                  <Chunk>
+                    <RunDetailPage />
+                  </Chunk>
+                ),
+              },
+              {
+                path: 'backtests/strategies/new',
+                element: (
+                  <Chunk>
+                    <StrategyEditorPage />
+                  </Chunk>
+                ),
+              },
+              {
+                path: 'backtests/strategies/:id',
+                element: (
+                  <Chunk>
+                    <StrategyEditorPage />
                   </Chunk>
                 ),
               },
