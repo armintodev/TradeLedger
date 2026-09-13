@@ -115,6 +115,104 @@ public sealed class CandleRepository(TradeLedgerDbContext db)
             .OrderBy(c => c.OpenTime)
             .ToListAsync(ct);
 
+    /// A range wide enough to matter holds more bars than any chart can draw — a year
+    /// of one-minute candles is over half a million rows — so beyond maxPoints the
+    /// series is aggregated rather than truncated: truncating would silently hide the
+    /// far end of the range, and shipping every row to paint 800 pixels is waste.
+    /// Buckets are counted from the first stored candle in the range, so a bar's
+    /// OpenTime is always the open time of a real candle.
+    public async Task<CandleSeries> GetSeriesAsync(
+        CandleSource source,
+        string symbol,
+        CandleInterval interval,
+        DateTimeOffset from,
+        DateTimeOffset to,
+        int maxPoints,
+        CancellationToken ct = default)
+    {
+        var query = db.Candles
+            .AsNoTracking()
+            .Where(c => c.Source == source
+                        && c.Symbol == symbol
+                        && c.Interval == interval
+                        && c.OpenTime >= from
+                        && c.OpenTime <= to);
+
+        var total = await query.CountAsync(ct);
+
+        if (total == 0)
+        {
+            return new CandleSeries(0, 1, []);
+        }
+
+        var bucketSize = (int)Math.Ceiling(total / (double)Math.Max(maxPoints, 1));
+
+        if (bucketSize <= 1)
+        {
+            var stored = await query
+                .OrderBy(c => c.OpenTime)
+                .Select(c => new CandleBar(c.OpenTime, c.Open, c.High, c.Low, c.Close, c.Volume))
+                .ToListAsync(ct);
+
+            return new CandleSeries(total, 1, stored);
+        }
+
+        // Bucketing happens in the database, off the raw epoch column rather than the
+        // timestamp, so the arithmetic is plain integer division. Only the extremes and
+        // the volume aggregate cleanly there; open and close need the first and last row
+        // of each bucket, which is the second query below — bounded at two rows per bar.
+        var firstMs = await query.MinAsync(c => c.OpenTimeRawMs, ct);
+        var bucketMs = (long)interval.Duration().TotalMilliseconds * bucketSize;
+
+        var buckets = await query
+            .GroupBy(c => (c.OpenTimeRawMs - firstMs) / bucketMs)
+            .Select(g => new
+            {
+                Bucket = g.Key,
+                FirstMs = g.Min(c => c.OpenTimeRawMs),
+                LastMs = g.Max(c => c.OpenTimeRawMs),
+                High = g.Max(c => c.High),
+                Low = g.Min(c => c.Low),
+                Volume = g.Sum(c => c.Volume),
+            })
+            .OrderBy(b => b.Bucket)
+            .ToListAsync(ct);
+
+        var edges = buckets
+            .SelectMany(b => new[] { b.FirstMs, b.LastMs })
+            .Distinct()
+            .ToList();
+
+        var edgeRows = await db.Candles
+            .AsNoTracking()
+            .Where(c => c.Source == source
+                        && c.Symbol == symbol
+                        && c.Interval == interval
+                        && edges.Contains(c.OpenTimeRawMs))
+            .Select(c => new { c.OpenTimeRawMs, c.OpenTime, c.Open, c.Close })
+            .ToListAsync(ct);
+
+        var byOpenTimeMs = edgeRows.ToDictionary(r => r.OpenTimeRawMs);
+
+        var bars = new List<CandleBar>(buckets.Count);
+
+        foreach (var bucket in buckets)
+        {
+            var opening = byOpenTimeMs[bucket.FirstMs];
+            var closing = byOpenTimeMs[bucket.LastMs];
+
+            bars.Add(new CandleBar(
+                opening.OpenTime,
+                opening.Open,
+                bucket.High,
+                bucket.Low,
+                closing.Close,
+                bucket.Volume));
+        }
+
+        return new CandleSeries(total, bucketSize, bars);
+    }
+
     public async Task<IReadOnlyList<CandleGap>> FindGapsAsync(
         CandleSource source,
         string symbol,

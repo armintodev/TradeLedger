@@ -135,5 +135,14 @@ public sealed class MarketDataBackfillJob : IUserOwned
         }
 
         CancellationRequested = true;
+
+        // A running job stops at its next chunk boundary and cancels itself there. A
+        // queued one never will: the worker's pickup query skips a job whose
+        // cancellation was requested, so nothing would ever move it off Queued. The
+        // outcome is knowable right now, so record it rather than leave it stuck.
+        if (Status == MarketDataJobStatus.Queued)
+        {
+            Cancel();
+        }
     }
 }

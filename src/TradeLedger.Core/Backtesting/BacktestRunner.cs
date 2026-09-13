@@ -17,11 +17,12 @@ public sealed record BacktestResultSummary
     public decimal MaxIntrabarDrawdown { get; init; }
     public decimal MaxIntrabarDrawdownPercent { get; init; }
 
+    // Every counter here is assigned by RuleSimulationCore.Build. Do not declare one
+    // the engine does not fill: a counter reading zero is a claim that nothing of that
+    // kind happened, and an unassigned one makes that claim without checking.
     public int AmbiguousSignals { get; init; }
     public int SkippedInvalidStop { get; init; }
     public int SkippedInsufficientMargin { get; init; }
-    public int SkippedNoCandleData { get; init; }
-    public int LiquidationRiskCount { get; init; }
     public int OpenAtEndOfData { get; init; }
 
     public int ResolvedUnambiguous { get; init; }

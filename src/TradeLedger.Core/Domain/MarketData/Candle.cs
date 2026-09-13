@@ -158,6 +158,24 @@ public sealed class MarketSymbolAlias
 
 public sealed record CandleGap(DateTimeOffset From, DateTimeOffset To, int MissingCount);
 
+/// One bar as a chart wants it. Either a stored candle or, once a range is wider
+/// than the point budget, several of them aggregated: the first bar's open, the
+/// extremes across the bucket, the last bar's close and the summed volume.
+public sealed record CandleBar(
+    DateTimeOffset OpenTime,
+    decimal Open,
+    decimal High,
+    decimal Low,
+    decimal Close,
+    decimal Volume);
+
+/// <param name="Total">Stored candles in the requested range, before any aggregation.</param>
+/// <param name="BucketSize">How many stored candles each returned bar covers; 1 when untouched.</param>
+public sealed record CandleSeries(int Total, int BucketSize, IReadOnlyList<CandleBar> Bars)
+{
+    public bool IsDownsampled => BucketSize > 1;
+}
+
 public sealed record CandleCoverage(
     CandleSource Source,
     string Symbol,

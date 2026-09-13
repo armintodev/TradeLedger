@@ -1,13 +1,5 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Security.Cryptography;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Identity;
-using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using TradeLedger.Api.Shared;
-using TradeLedger.Core.Domain;
 
 namespace TradeLedger.IntegrationTests;
 
@@ -18,11 +10,11 @@ public sealed class CorsPolicyTests(PostgresFixture fixture) : IAsyncLifetime
     private const string BlockedOrigin = "https://evil.example";
     private const string AllowOriginHeader = "Access-Control-Allow-Origin";
 
-    private CorsApiFactory _factory = null!;
+    private ApiFactory _factory = null!;
 
     public Task InitializeAsync()
     {
-        _factory = new CorsApiFactory(fixture.ConnectionString, AllowedOrigin);
+        _factory = new ApiFactory(fixture.ConnectionString, AllowedOrigin);
 
         return Task.CompletedTask;
     }
@@ -84,82 +76,9 @@ public sealed class CorsPolicyTests(PostgresFixture fixture) : IAsyncLifetime
         return await _factory.CreateClient().SendAsync(request);
     }
 
-    private async Task<string> IssueTokenAsync()
-    {
-        using var scope = _factory.Services.CreateScope();
-
-        var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
-        var tokens = scope.ServiceProvider.GetRequiredService<JwtTokenService>();
-
-        var email = $"cors-{Guid.CreateVersion7():N}@tradeledger.test";
-
-        var user = new AppUser
-        {
-            Id = Guid.CreateVersion7(),
-            UserName = email,
-            Email = email,
-            EmailConfirmed = true,
-        };
-
-        var created = await users.CreateAsync(user, "a-long-test-password");
-        Assert.True(created.Succeeded, string.Join("; ", created.Errors.Select(e => e.Description)));
-
-        return tokens.Issue(user).Token;
-    }
+    private async Task<string> IssueTokenAsync() => (await _factory.CreateUserAsync()).Token;
 
     private static string? Single(HttpResponseMessage response, string header) =>
         response.Headers.TryGetValues(header, out var values) ? values.SingleOrDefault() : null;
 }
 
-/// Hosts the real API against the test container. Program.cs reads Cors, the
-/// connection strings and the JWT key while it registers services, which is before
-/// any WebApplicationFactory callback can contribute, so those go through the
-/// environment; the in-memory source repeats them for anything read later.
-public sealed class CorsApiFactory : WebApplicationFactory<Program>
-{
-    private readonly Dictionary<string, string> _settings;
-
-    public CorsApiFactory(string connectionString, string allowedOrigin)
-    {
-        _settings = new Dictionary<string, string>
-        {
-            ["ASPNETCORE_ENVIRONMENT"] = "Testing",
-            ["ConnectionStrings__Postgres"] = connectionString,
-
-            // Blank means "no Redis", which swaps in the no-op lock and rate limiters.
-            // A single space rather than "" because Windows deletes an empty variable.
-            ["ConnectionStrings__Redis"] = " ",
-            ["Cors__AllowedOrigins__0"] = allowedOrigin,
-            ["Jwt__SigningKey"] = new string('k', 48),
-            ["Encryption__KeyBase64"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
-
-            // No owner seed: these tests create the user they need.
-            ["Seed__OwnerEmail"] = " ",
-        };
-
-        foreach (var (key, value) in _settings)
-        {
-            Environment.SetEnvironmentVariable(key, value);
-        }
-    }
-
-    protected override void ConfigureWebHost(IWebHostBuilder builder)
-    {
-        builder.UseEnvironment("Testing");
-
-        builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
-            _settings
-                .Where(pair => !pair.Key.StartsWith("ASPNETCORE_", StringComparison.Ordinal))
-                .ToDictionary(pair => pair.Key.Replace("__", ":"), pair => (string?)pair.Value)));
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        foreach (var key in _settings.Keys)
-        {
-            Environment.SetEnvironmentVariable(key, null);
-        }
-
-        base.Dispose(disposing);
-    }
-}

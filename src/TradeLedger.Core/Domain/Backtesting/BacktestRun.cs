@@ -138,7 +138,6 @@ public sealed class BacktestRun : IUserOwned
                 nameof(spec.MaintenanceMarginRate)),
             IncludeFunding = spec.IncludeFunding,
             AllowGaps = spec.AllowGaps,
-            DataQuality = spec.AllowGaps ? DataQuality.Gapped : DataQuality.Clean,
             EngineVersion = spec.EngineVersion,
             WhatIfJson = spec.WhatIfJson,
         };
@@ -221,6 +220,9 @@ public sealed class BacktestRun : IUserOwned
         CancellationRequested = true;
     }
 
+    // A run is Clean until someone has actually looked at the candles it will run
+    // over. AllowGaps records what the trader permitted; this records what was
+    // found. Deriving one from the other conflates two different facts.
     public void MarkDataQuality(DataQuality quality)
     {
         DataQuality = quality;

@@ -42,6 +42,8 @@ public sealed record BackfillJobResponse(
     int CandlesWritten,
     int FundingRatesWritten,
     decimal ProgressPercent,
+    bool CancellationRequested,
+    bool IncludeFundingRates,
     DateTimeOffset QueuedAt,
     DateTimeOffset? StartedAt,
     DateTimeOffset? FinishedAt,
@@ -50,6 +52,7 @@ public sealed record BackfillJobResponse(
     public static BackfillJobResponse Of(MarketDataBackfillJob j) => new(
         j.Id, j.Source, j.Symbol, j.Interval, j.From, j.To, j.Status,
         j.CandlesWritten, j.FundingRatesWritten, j.ProgressPercent,
+        j.CancellationRequested, j.IncludeFundingRates,
         j.QueuedAt, j.StartedAt, j.FinishedAt, j.Error);
 }
 
@@ -70,6 +73,46 @@ public sealed record CandleImportResponse(
         i.Id, i.FileName, i.Source, i.Symbol, i.Interval,
         i.RowsParsed, i.RowsInserted, i.RowsSkippedAsDuplicate,
         i.FirstOpenTime, i.LastOpenTime, warnings);
+}
+
+public sealed record CandleBarResponse(
+    DateTimeOffset OpenTime,
+    decimal Open,
+    decimal High,
+    decimal Low,
+    decimal Close,
+    decimal Volume)
+{
+    public static CandleBarResponse Of(CandleBar b) => new(
+        b.OpenTime, b.Open, b.High, b.Low, b.Close, b.Volume);
+}
+
+/// <param name="Total">Stored candles in the range, before any aggregation.</param>
+/// <param name="Returned">Bars in this response.</param>
+/// <param name="BucketSize">Stored candles behind each returned bar; 1 when untouched.</param>
+public sealed record CandleSeriesResponse(
+    CandleSource Source,
+    string Symbol,
+    CandleInterval Interval,
+    DateTimeOffset From,
+    DateTimeOffset To,
+    int Total,
+    int Returned,
+    int BucketSize,
+    bool IsDownsampled,
+    IReadOnlyList<CandleBarResponse> Candles)
+{
+    public static CandleSeriesResponse Of(CandleQuery q, CandleSeries s) => new(
+        q.Source,
+        q.Symbol.Trim().ToUpperInvariant(),
+        q.Interval,
+        q.From,
+        q.To,
+        s.Total,
+        s.Bars.Count,
+        s.BucketSize,
+        s.IsDownsampled,
+        [.. s.Bars.Select(CandleBarResponse.Of)]);
 }
 
 public sealed record DeleteCandlesResponse(int Deleted);

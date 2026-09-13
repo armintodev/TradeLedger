@@ -12,6 +12,14 @@ namespace TradeLedger.Api.Features.MarketData;
 
 public static class MarketDataEndpoints
 {
+    // A chart draws in pixels, not rows, so the series endpoint has a point budget
+    // rather than a row limit; past it the range is aggregated into that many bars.
+    private const int DefaultCandlePoints = 1_000;
+    private const int MaxCandlePoints = 5_000;
+
+    private const int DefaultBackfillHistory = 50;
+    private const int MaxBackfillHistory = 200;
+
     public static void MapMarketDataEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/market-data")
@@ -78,6 +86,40 @@ public static class MarketDataEndpoints
         .Produces<BackfillJobResponse>(StatusCodes.Status202Accepted)
         .ProducesProblem(StatusCodes.Status400BadRequest);
 
+        group.MapGet("/backfill", async (
+            TradeLedgerDbContext db,
+            [FromQuery] MarketDataJobStatus? status,
+            [FromQuery] string? symbol,
+            [FromQuery] int? limit,
+            CancellationToken ct) =>
+        {
+            var take = Math.Clamp(limit ?? DefaultBackfillHistory, 1, MaxBackfillHistory);
+
+            var query = db.MarketDataBackfillJobs.AsNoTracking();
+
+            if (status is { } jobStatus)
+            {
+                query = query.Where(j => j.Status == jobStatus);
+            }
+
+            if (!string.IsNullOrWhiteSpace(symbol))
+            {
+                var normalised = symbol.Trim().ToUpperInvariant();
+                query = query.Where(j => j.Symbol == normalised);
+            }
+
+            var jobs = await query
+                .OrderByDescending(j => j.QueuedAt)
+                .Take(take)
+                .ToListAsync(ct);
+
+            return Results.Ok(jobs.Select(BackfillJobResponse.Of).ToList());
+        })
+        .WithName("ListMarketDataBackfills")
+        .WithSummary("Backfill history")
+        .WithDescription("Every backfill you have queued, newest first, filterable by status and symbol. This is the record of what was fetched and what failed: a failed job's error string is the only account of why, and without a list it would be reachable only by an id you happened to keep.")
+        .Produces<List<BackfillJobResponse>>();
+
         group.MapGet("/backfill/{id:guid}", async (
             Guid id,
             TradeLedgerDbContext db,
@@ -112,9 +154,10 @@ public static class MarketDataEndpoints
         })
         .WithName("CancelMarketDataBackfill")
         .WithSummary("Cancel a backfill")
-        .WithDescription("Flags a running job to stop at its next chunk boundary. Candles already written are kept, since they are valid on their own.")
+        .WithDescription("Flags a running job to stop at its next chunk boundary; cancellationRequested on the response says the flag is set while the job winds down. Candles already written are kept, since they are valid on their own. A job still queued never started, so it goes straight to Cancelled rather than waiting for a worker that would skip it.")
         .Produces<BackfillJobResponse>()
-        .ProducesProblem(StatusCodes.Status404NotFound);
+        .ProducesProblem(StatusCodes.Status404NotFound)
+        .ProducesProblem(StatusCodes.Status409Conflict);
 
         group.MapPost("/import", async (
             IFormFile file,
@@ -193,17 +236,44 @@ public static class MarketDataEndpoints
         .ProducesProblem(StatusCodes.Status400BadRequest)
         .DisableAntiforgery();
 
+        group.MapGet("/candles", async (
+            CandleRepository candles,
+            [AsParameters] CandleQuery query,
+            CancellationToken ct) =>
+        {
+            if (query.From >= query.To)
+            {
+                throw new DomainValidationException("from", "from must be earlier than to.");
+            }
+
+            var series = await candles.GetSeriesAsync(
+                query.Source,
+                query.Symbol.Trim().ToUpperInvariant(),
+                query.Interval,
+                query.From,
+                query.To,
+                Math.Clamp(query.MaxPoints ?? DefaultCandlePoints, 2, MaxCandlePoints),
+                ct);
+
+            return Results.Ok(CandleSeriesResponse.Of(query, series));
+        })
+        .WithName("GetCandles")
+        .WithSummary("OHLC bars for a range")
+        .WithDescription($"Open time, open, high, low, close and volume for one source, symbol and interval. A range holding more than maxPoints bars (default {DefaultCandlePoints}, maximum {MaxCandlePoints}) is aggregated rather than truncated: each returned bar takes the first stored candle's open, the extremes across its bucket, the last candle's close and the summed volume, and bucketSize says how many candles each one covers. Truncating would silently drop the far end of the range, and a year of one-minute candles is over half a million rows. Read total against returned to see how much was folded together.")
+        .Produces<CandleSeriesResponse>()
+        .ProducesProblem(StatusCodes.Status400BadRequest);
+
         group.MapDelete("/candles", async (
             CandleRepository candles,
             [AsParameters] GapQuery query,
             CancellationToken ct) =>
         {
+            // GET /gaps rejects the identical mistake by throwing, so this throws too:
+            // the same error should not arrive in two different shapes depending on
+            // which verb reached it.
             if (query.From >= query.To)
             {
-                return Results.Problem(
-                    title: "Invalid range",
-                    detail: "from must be earlier than to.",
-                    statusCode: StatusCodes.Status400BadRequest);
+                throw new DomainValidationException("from", "from must be earlier than to.");
             }
 
             var deleted = await candles.DeleteRangeAsync(

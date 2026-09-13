@@ -46,9 +46,14 @@ public sealed record BacktestRunResponse(
     DateTimeOffset? FinishedAt,
     string? Error,
     BacktestResultSummary? Result,
-    IReadOnlyList<string> Warnings)
+    IReadOnlyList<string> Warnings,
+    JsonElement? Rule)
 {
-    public static BacktestRunResponse Of(BacktestRun r) => new(
+    /// The frozen rule travels with the by-id fetch only, the way
+    /// BacktestStrategyResponse gates its own: a list of fifty runs should not carry
+    /// fifty rule trees, but a single result is unexplainable without the one that
+    /// produced it, and the live strategy may be several versions ahead by then.
+    public static BacktestRunResponse Of(BacktestRun r, bool includeRule = false) => new(
         r.Id, r.BacktestAccountId, r.Kind, r.Status, r.BacktestStrategyId, r.RuleHash,
         r.Symbol, r.Source, r.Interval, r.From, r.To,
         r.OpeningBalance, r.ClosingBalance,
@@ -58,7 +63,10 @@ public sealed record BacktestRunResponse(
         r.TotalBars, r.BarsProcessed, r.ProgressPercent, r.CancellationRequested,
         r.QueuedAt, r.StartedAt, r.FinishedAt, r.Error,
         BacktestRunEndpoints.DeserializeSummary(r.ResultJson),
-        BacktestRunEndpoints.DeserializeWarnings(r.WarningsJson));
+        BacktestRunEndpoints.DeserializeWarnings(r.WarningsJson),
+        includeRule && r.RuleJson is { } json
+            ? JsonDocument.Parse(json).RootElement.Clone()
+            : null);
 }
 
 public sealed record BacktestTradeResponse(
@@ -103,4 +111,20 @@ public sealed record BacktestTradeResponse(
         t.AchievedReturnR, t.PlannedReturnR, t.TradeGainPercent, t.BalanceAfter,
         t.Duration, t.Outcome, t.ExitReason, t.IntrabarResolution, t.WasLiquidated,
         t.MaeR, t.MfeR, t.SourceTradeId);
+}
+
+public sealed record BacktestExecutionResponse(
+    Guid Id,
+    Guid BacktestTradeId,
+    ExecutionRole Role,
+    decimal Price,
+    decimal Quantity,
+    decimal Fee,
+    decimal Notional,
+    DateTimeOffset ExecutedAt,
+    int BarIndex)
+{
+    public static BacktestExecutionResponse From(BacktestExecution e) => new(
+        e.Id, e.BacktestTradeId, e.Role, e.Price, e.Quantity, e.Fee, e.Notional,
+        e.ExecutedAt, e.BarIndex);
 }

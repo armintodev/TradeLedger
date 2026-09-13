@@ -62,7 +62,7 @@ public static class BacktestRunEndpoints
                 .ToListAsync(ct);
 
             return Results.Ok(new PagedResult<BacktestRunResponse>(
-                [.. runs.Select(BacktestRunResponse.Of)],
+                [.. runs.Select(run => BacktestRunResponse.Of(run))],
                 skip + 1,
                 take,
                 total));
@@ -98,13 +98,14 @@ public static class BacktestRunEndpoints
             TradeLedgerDbContext db,
             CancellationToken ct) =>
         {
-            var run = await db.BacktestRuns.AsNoTracking().FirstOrDefaultAsync(r => r.Id == id, ct);
+            var run = await db.BacktestRuns.AsNoTracking().FirstOrDefaultAsync(r => r.Id == id, ct)
+                ?? throw new ResourceNotFoundException("Backtest run", id);
 
-            return run is null ? Results.NotFound() : Results.Ok(BacktestRunResponse.Of(run));
+            return Results.Ok(BacktestRunResponse.Of(run, includeRule: true));
         })
         .WithName("GetBacktestRun")
         .WithSummary("Run status and result")
-        .WithDescription("Progress while running; once finished, the performance summary plus engine counters such as how many exits were resolved by minute data versus assumed. A run whose exits were mostly assumed is a weak result and says so here.")
+        .WithDescription("Progress while running; once finished, the performance summary plus engine counters such as how many exits were resolved by minute data versus assumed. A run whose exits were mostly assumed is a weak result and says so here. This fetch also returns the frozen copy of the rule the run executed, so an old result stays explainable after the strategy has moved on; the list omits it.")
         .Produces<BacktestRunResponse>()
         .ProducesProblem(StatusCodes.Status404NotFound);
 
@@ -176,20 +177,54 @@ public static class BacktestRunEndpoints
             var take = Math.Clamp(pageSize ?? 100, 1, 500);
             var skip = Math.Max(page ?? 1, 1) - 1;
 
-            var trades = await db.BacktestTrades
+            var query = db.BacktestTrades
                 .AsNoTracking()
-                .Where(t => t.BacktestRunId == id)
+                .Where(t => t.BacktestRunId == id);
+
+            var total = await query.CountAsync(ct);
+
+            var trades = await query
                 .OrderBy(t => t.Sequence)
                 .Skip(skip * take)
                 .Take(take)
                 .ToListAsync(ct);
 
-            return Results.Ok(trades.Select(BacktestTradeResponse.From).ToList());
+            return Results.Ok(new PagedResult<BacktestTradeResponse>(
+                [.. trades.Select(BacktestTradeResponse.From)],
+                skip + 1,
+                take,
+                total));
         })
         .WithName("GetBacktestRunTrades")
         .WithSummary("Simulated trades from a run")
-        .WithDescription("Each trade records how its exit was decided: unambiguous, resolved by drilling into one-minute candles, or assumed pessimistically because the bar held both the stop and the target and finer data could not separate them.")
-        .Produces<List<BacktestTradeResponse>>()
+        .WithDescription("Each trade records how its exit was decided: unambiguous, resolved by drilling into one-minute candles, or assumed pessimistically because the bar held both the stop and the target and finer data could not separate them. Paged the same way as the runs list, total included, so a page count can be derived rather than guessed at.")
+        .Produces<PagedResult<BacktestTradeResponse>>()
+        .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapGet("/{id:guid}/trades/{tradeId:guid}/executions", async (
+            Guid id,
+            Guid tradeId,
+            TradeLedgerDbContext db,
+            CancellationToken ct) =>
+        {
+            if (!await db.BacktestTrades.AnyAsync(t => t.Id == tradeId && t.BacktestRunId == id, ct))
+            {
+                throw new ResourceNotFoundException("Backtest trade", tradeId);
+            }
+
+            var executions = await db.BacktestExecutions
+                .AsNoTracking()
+                .Where(e => e.BacktestTradeId == tradeId)
+                .OrderBy(e => e.ExecutedAt)
+                .ThenBy(e => e.BarIndex)
+                .ToListAsync(ct);
+
+            return Results.Ok(executions.Select(BacktestExecutionResponse.From).ToList());
+        })
+        .WithName("GetBacktestTradeExecutions")
+        .WithSummary("Fills behind one simulated trade")
+        .WithDescription("The individual fills the engine recorded for a simulated trade: an Open plus a Close or Liquidation, each with its price, quantity, fee, timestamp and the index of the bar it happened on. The engine holds one position at a time with a single entry fill, so today this is always two rows; it is the same shape as the real journal's executions and grows with the engine.")
+        .Produces<List<BacktestExecutionResponse>>()
         .ProducesProblem(StatusCodes.Status404NotFound);
 
         group.MapGet("/{id:guid}/equity-curve", async (
@@ -297,6 +332,12 @@ public static class BacktestRunEndpoints
         var source = request.Source ?? CandleSource.BinanceFutures;
         var symbol = (request.Symbol ?? string.Empty).Trim().ToUpperInvariant();
 
+        // The gaps are looked for whether or not they are permitted: allowGaps decides
+        // whether a hole refuses the run, and the same answer decides what DataQuality
+        // the run is stamped with. Deriving the stamp from the flag instead would mean
+        // a run over complete data reads as gapped for the rest of its life.
+        var foundGaps = false;
+
         if (kind == BacktestKind.RuleEngine)
         {
             if (string.IsNullOrWhiteSpace(symbol))
@@ -306,15 +347,17 @@ public static class BacktestRunEndpoints
                     "A rule engine run needs the symbol it should trade.");
             }
 
-            if (request.AllowGaps != true)
-            {
-                var gaps = await candles.FindGapsAsync(
-                    source, symbol, interval, request.From, request.To, ct);
+            var gaps = await candles.FindGapsAsync(
+                source, symbol, interval, request.From, request.To, ct);
 
-                if (gaps.Count > 0)
+            if (gaps.Count > 0)
+            {
+                if (request.AllowGaps != true)
                 {
                     throw new DomainRuleException("candle_data_has_gaps", BuildGapDetail(gaps, interval));
                 }
+
+                foundGaps = true;
             }
         }
 
@@ -342,6 +385,11 @@ public static class BacktestRunEndpoints
             EngineVersion = options.EngineVersion,
             WhatIfJson = whatIfJson,
         });
+
+        if (foundGaps)
+        {
+            run.MarkDataQuality(DataQuality.Gapped);
+        }
 
         if (request.BacktestStrategyId is { } strategyId)
         {

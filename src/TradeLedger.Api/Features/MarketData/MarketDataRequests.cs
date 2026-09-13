@@ -16,6 +16,14 @@ public sealed record GapQuery(
     [FromQuery] DateTimeOffset From,
     [FromQuery] DateTimeOffset To);
 
+public sealed record CandleQuery(
+    [FromQuery] CandleSource Source,
+    [FromQuery] string Symbol,
+    [FromQuery] CandleInterval Interval,
+    [FromQuery] DateTimeOffset From,
+    [FromQuery] DateTimeOffset To,
+    [FromQuery] int? MaxPoints);
+
 public sealed record BackfillRequest(
     CandleSource Source,
     string Symbol,

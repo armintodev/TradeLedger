@@ -258,11 +258,38 @@ public class BacktestLifecycleTests
         Assert.Equal(-1m, trade.AchievedReturnR);
     }
 
+    // DataQuality is what was found in the candles, not what the request permitted.
+    // It used to be assigned from AllowGaps at queue time, which stamped a run over
+    // perfectly complete data as Gapped for the rest of its life and made a run that
+    // really did cross a hole indistinguishable from it.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AQueuedRunIsCleanUntilTheCandlesHaveBeenLookedAt(bool allowGaps)
+    {
+        var run = Queue(allowGaps: allowGaps);
+
+        Assert.Equal(allowGaps, run.AllowGaps);
+        Assert.Equal(DataQuality.Clean, run.DataQuality);
+    }
+
+    [Fact]
+    public void ARunIsStampedGappedOnlyWhenRealGapsWereFound()
+    {
+        var run = Queue(allowGaps: true);
+
+        run.MarkDataQuality(DataQuality.Gapped);
+
+        Assert.Equal(DataQuality.Gapped, run.DataQuality);
+        Assert.True(run.AllowGaps);
+    }
+
     private static BacktestRun Queue(
         string? symbol = "BTCUSDT",
         CandleInterval? interval = CandleInterval.OneHour,
         DateTimeOffset? from = null,
-        DateTimeOffset? to = null) =>
+        DateTimeOffset? to = null,
+        bool allowGaps = false) =>
         BacktestRun.Queue(new NewBacktestRun
         {
             BacktestAccountId = Guid.CreateVersion7(),
@@ -275,6 +302,7 @@ public class BacktestLifecycleTests
             RiskPercentPerPosition = 2m,
             RiskRewardRatio = 2m,
             Leverage = 5,
+            AllowGaps = allowGaps,
             EngineVersion = 1,
         });
 }

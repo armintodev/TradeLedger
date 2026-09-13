@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using Scalar.AspNetCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -22,6 +23,7 @@ using TradeLedger.Api.Shared.Errors;
 using TradeLedger.Api.Shared.OpenApi;
 using TradeLedger.Core;
 using TradeLedger.Core.Domain;
+using TradeLedger.Core.MarketData;
 using TradeLedger.Core.Persistence;
 using TradeLedger.Core.Shared;
 
@@ -45,6 +47,22 @@ builder.Services.AddScoped<IUserContext, HttpUserContext>();
 builder.Services.AddSingleton<JwtTokenService>();
 
 builder.Services.AddTradeLedgerCore(builder.Configuration);
+
+// One source for the CSV import ceiling. The endpoint refuses a file over
+// MarketData:MaxImportBytes with a field-keyed validation error; Kestrel would
+// otherwise refuse anything over its own ~30 MB default first, as an opaque
+// malformed_request, leaving the top of the configured range unreachable.
+var marketData = builder.Configuration
+    .GetSection(MarketDataOptions.SectionName)
+    .Get<MarketDataOptions>() ?? new MarketDataOptions();
+
+builder.WebHost.ConfigureKestrel(
+    options => options.Limits.MaxRequestBodySize = marketData.MaxRequestBodyBytes);
+
+builder.Services.Configure<FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = marketData.MaxRequestBodyBytes;
+});
 
 builder.Services
     .AddIdentityCore<AppUser>(options =>
