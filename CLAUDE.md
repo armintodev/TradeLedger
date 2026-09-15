@@ -276,6 +276,7 @@ src/
     Analytics/               metrics, equity curve, position-size calculator
     Backtesting/             options, runner, engine, indicators, rules (services only)
     MarketData/              Binance client, repository, CSV import, backfill (services only)
+    MarketStructure/         swing detection, reversal thresholds (services only)
     Shared/                  precision, tenancy, crypto, Redis lock, egress proxy
   TradeLedger.Api/           minimal APIs, vertical slices
     Features/
@@ -295,7 +296,8 @@ src/
       OpenApi/               document, security and tag transformers
   TradeLedger.Worker/        SyncWorker, SnapshotWorker, MarketDataWorker, BacktestWorker
 tests/
-  TradeLedger.UnitTests/          signer, domain rules, calculations, indicators, rules engine
+  TradeLedger.UnitTests/          signer, domain rules, calculations, indicators, rules engine,
+                                  swing detection
   TradeLedger.IntegrationTests/   tenancy, idempotency, precision, transactions (Testcontainers)
 web/                       React + TypeScript SPA, its own toolchain, not in the .slnx
   SPEC.md                  the implementation spec this was built from
@@ -315,6 +317,7 @@ docs/
   excel-journal-reference.md
   bitunix-api.md
   market-data.md
+  market-structure.md          the swing / wave pipeline and the detector it starts with
   backend-changes-for-web.md   what the frontend needed, and what is still open
   backtest-impl.md             the same, for the backtest and market-data screens
 compose.yaml               postgres + redis + web for local dev

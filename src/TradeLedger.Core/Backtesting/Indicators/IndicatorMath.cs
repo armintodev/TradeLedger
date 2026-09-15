@@ -193,6 +193,51 @@ public static class IndicatorMath
         return result;
     }
 
+    /// <summary>
+    /// Wilder's average true range.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately absent from <see cref="IndicatorFactory"/>'s dictionary: SPEC.md section
+    /// 6.7 says ATR is not a user-facing indicator and that nothing in a rule document may
+    /// reference it. A registry entry would break that, and would delay the first warm bar of
+    /// every existing strategy besides. This exists for the engine's own use — the swing
+    /// detector sizes its reversal threshold from it.
+    ///
+    /// True range needs a previous bar, so the first one lands at index 1 and the seed average
+    /// at <paramref name="period"/>: the same warmup <see cref="Dmi"/> has, running the same
+    /// recursion it already runs on its true-range sum.
+    /// </remarks>
+    public static decimal?[] Atr(IReadOnlyList<Candle> candles, int period)
+    {
+        Guard(period);
+
+        var count = candles.Count;
+        var result = new decimal?[count];
+
+        if (count <= period)
+        {
+            return result;
+        }
+
+        var sum = 0m;
+
+        for (var i = 1; i <= period; i++)
+        {
+            sum += TrueRange(candles, i);
+        }
+
+        var previous = sum / period;
+        result[period] = previous;
+
+        for (var i = period + 1; i < count; i++)
+        {
+            previous = (previous * (period - 1) + TrueRange(candles, i)) / period;
+            result[i] = previous;
+        }
+
+        return result;
+    }
+
     public static decimal?[] Highest(decimal[] values, int period) =>
         RollingExtreme(values, period, highest: true);
 
@@ -278,13 +323,23 @@ public static class IndicatorMath
         var plusDm = highMove > lowMove && highMove > 0 ? highMove : 0m;
         var minusDm = lowMove > highMove && lowMove > 0 ? lowMove : 0m;
 
-        var trueRange = Math.Max(
+        return (TrueRange(candles, index), plusDm, minusDm);
+    }
+
+    /// <summary>
+    /// Wilder's true range: the bar's own span, or its distance from the previous close
+    /// where a gap made that wider. Shared by <see cref="Dmi"/> and <see cref="Atr"/>.
+    /// </summary>
+    private static decimal TrueRange(IReadOnlyList<Candle> candles, int index)
+    {
+        var current = candles[index];
+        var previous = candles[index - 1];
+
+        return Math.Max(
             current.High - current.Low,
             Math.Max(
                 Math.Abs(current.High - previous.Close),
                 Math.Abs(current.Low - previous.Close)));
-
-        return (trueRange, plusDm, minusDm);
     }
 
     private static decimal RsiFrom(decimal averageGain, decimal averageLoss)
