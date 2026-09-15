@@ -1,0 +1,51 @@
+PRICE DATA
+                        │
+                        ▼
+                ┌───────────────┐
+                │ Swing Detector│
+                └───────┬───────┘
+                        │
+                 High / Low points
+                        │
+                        ▼
+                ┌───────────────┐
+                │ Wave Analyzer │
+                └───────┬───────┘
+                        │
+          Size / Duration / Velocity / ATR
+                        │
+                        ▼
+                ┌───────────────┐
+                │    Strategy   │
+                └───────────────┘
+
+--------------  --------------  --------------  --------------  
+
+
+             ┌─────────────────┐
+             │      START      │
+             └────────┬────────┘
+                      │
+                      ▼
+             ┌─────────────────┐
+             │ FINDING INITIAL │
+             │      SWING      │
+             └────────┬────────┘
+                      │
+             determine direction
+                 ↙         ↘
+                /           \
+               ▼             ▼
+       SEARCHING HIGH   SEARCHING LOW
+               │             │
+               │             │
+          reversal        reversal
+          confirmed       confirmed
+               │             │
+               ▼             ▼
+        HIGH CONFIRMED   LOW CONFIRMED
+               │             │
+               └──────┬──────┘
+                      │
+                      ▼
+             switch direction
