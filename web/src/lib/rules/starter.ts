@@ -17,10 +17,11 @@ export function starterDraft(): RuleDraft {
     type: 'Ema' as const,
     source: 'Close' as const,
     period: 20,
+    interval: null,
   };
 
   return {
-    version: 1,
+    version: 1 as const,
     indicators: [fast],
     entry: {
       long: {

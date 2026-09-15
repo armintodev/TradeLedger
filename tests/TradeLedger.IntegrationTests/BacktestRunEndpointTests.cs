@@ -17,6 +17,23 @@ public sealed class BacktestRunEndpointTests(PostgresFixture fixture) : IAsyncLi
 
     private static readonly DateTimeOffset RangeStart = new(2025, 3, 1, 0, 0, 0, TimeSpan.Zero);
 
+    /// <summary>
+    /// The strategy these tests queue carries a 9-period EMA, so it needs 3 x 9 + 1 hours of
+    /// candles before a run may start. Coverage is checked across the warmup window as well
+    /// as the run itself, so a run beginning at the first stored candle is refused.
+    /// </summary>
+    private const int WarmupHours = 28;
+
+    private static readonly DateTimeOffset RunFrom = RangeStart.AddHours(WarmupHours);
+
+    private static readonly DateTimeOffset RunTo = RangeStart.AddHours(47);
+
+    /// <summary>
+    /// Six decimals, which is exactly what numeric(18,6) holds. A narrower column would round
+    /// the reading, and a reading that rounds can cross a band boundary.
+    /// </summary>
+    private const decimal SeededCycleAdx = 18.123456m;
+
     private ApiFactory _factory = null!;
 
     public Task InitializeAsync()
@@ -39,9 +56,10 @@ public sealed class BacktestRunEndpointTests(PostgresFixture fixture) : IAsyncLi
 
         var symbol = await SeedHourlyCandlesAsync(RangeStart, hours: 48);
         var accountId = await CreateAccountAsync(client);
+        var strategyId = await CreateStrategyAsync(client);
 
         var run = await QueueAsync(
-            client, accountId, symbol, RangeStart, RangeStart.AddHours(47), allowGaps: true);
+            client, accountId, symbol, RunFrom, RunTo, allowGaps: true, strategyId);
 
         Assert.Equal("Clean", run.GetProperty("dataQuality").GetString());
         Assert.True(run.GetProperty("allowGaps").GetBoolean());
@@ -54,12 +72,13 @@ public sealed class BacktestRunEndpointTests(PostgresFixture fixture) : IAsyncLi
         var client = _factory.CreateClientFor(token);
 
         var symbol = await SeedHourlyCandlesAsync(RangeStart, hours: 48);
-        await DeleteCandleAsync(symbol, RangeStart.AddHours(20));
+        await DeleteCandleAsync(symbol, RunFrom.AddHours(5));
 
         var accountId = await CreateAccountAsync(client);
+        var strategyId = await CreateStrategyAsync(client);
 
         var run = await QueueAsync(
-            client, accountId, symbol, RangeStart, RangeStart.AddHours(47), allowGaps: true);
+            client, accountId, symbol, RunFrom, RunTo, allowGaps: true, strategyId);
 
         Assert.Equal("Gapped", run.GetProperty("dataQuality").GetString());
         Assert.True(run.GetProperty("allowGaps").GetBoolean());
@@ -72,17 +91,131 @@ public sealed class BacktestRunEndpointTests(PostgresFixture fixture) : IAsyncLi
         var client = _factory.CreateClientFor(token);
 
         var symbol = await SeedHourlyCandlesAsync(RangeStart, hours: 48);
-        await DeleteCandleAsync(symbol, RangeStart.AddHours(20));
+        await DeleteCandleAsync(symbol, RunFrom.AddHours(5));
 
         var accountId = await CreateAccountAsync(client);
+        var strategyId = await CreateStrategyAsync(client);
 
         var response = await client.PostAsJsonAsync("/api/backtests", Request(
-            accountId, symbol, RangeStart, RangeStart.AddHours(47), allowGaps: false));
+            accountId, symbol, RunFrom, RunTo, allowGaps: false, strategyId));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
 
         var problem = await ReadJsonAsync(response);
         Assert.Equal("candle_data_has_gaps", problem.GetProperty("code").GetString());
+    }
+
+    /// Warmup candles feed the indicators that produce every signal, so a hole among them
+    /// corrupts the run just as surely as one inside the traded range. Coverage used to be
+    /// checked only from the start date, which left that window entirely unexamined.
+    [Fact]
+    public async Task AHoleInTheWarmupWindowIsRefusedThoughTheRunRangeItselfIsComplete()
+    {
+        var (_, token) = await _factory.CreateUserAsync();
+        var client = _factory.CreateClientFor(token);
+
+        var symbol = await SeedHourlyCandlesAsync(RangeStart, hours: 48);
+        await DeleteCandleAsync(symbol, RangeStart.AddHours(3));
+
+        var accountId = await CreateAccountAsync(client);
+        var strategyId = await CreateStrategyAsync(client);
+
+        var response = await client.PostAsJsonAsync("/api/backtests", Request(
+            accountId, symbol, RunFrom, RunTo, allowGaps: false, strategyId));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(
+            "candle_data_has_gaps",
+            (await ReadJsonAsync(response)).GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task AnIndicatorBelowTheRunsOwnIntervalIsRefused()
+    {
+        var (_, token) = await _factory.CreateUserAsync();
+        var client = _factory.CreateClientFor(token);
+
+        var symbol = await SeedHourlyCandlesAsync(RangeStart, hours: 48);
+        var accountId = await CreateAccountAsync(client);
+
+        // Fifteen-minute bars cannot be built from the hourly ones this run trades.
+        var strategyId = await CreateStrategyAsync(
+            client,
+            """{ "id": "ltf", "type": "Ema", "interval": "FifteenMinutes", "params": { "period": 2 } }""",
+            version: 2);
+
+        var response = await client.PostAsJsonAsync("/api/backtests", Request(
+            accountId, symbol, RunFrom, RunTo, allowGaps: false, strategyId));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+
+        var problem = await ReadJsonAsync(response);
+
+        Assert.Equal("indicator_interval_incompatible", problem.GetProperty("code").GetString());
+        Assert.Contains("FifteenMinutes", problem.GetProperty("detail").GetString()!);
+    }
+
+    [Fact]
+    public async Task AnIndicatorOnAHigherTimeframeQueuesNormally()
+    {
+        var (_, token) = await _factory.CreateUserAsync();
+        var client = _factory.CreateClientFor(token);
+
+        var symbol = await SeedHourlyCandlesAsync(RangeStart, hours: 48);
+        var accountId = await CreateAccountAsync(client);
+
+        var strategyId = await CreateStrategyAsync(
+            client,
+            """{ "id": "htf", "type": "Ema", "interval": "FourHours", "params": { "period": 2 } }""",
+            version: 2);
+
+        var run = await QueueAsync(
+            client, accountId, symbol, RunFrom, RunTo, allowGaps: false, strategyId);
+
+        Assert.Equal("Clean", run.GetProperty("dataQuality").GetString());
+    }
+
+    /// Such a run used to queue happily and then fail in the worker with nothing to show.
+    [Fact]
+    public async Task ARuleEngineRunWithoutAStrategyIsRefusedAtTheDoor()
+    {
+        var (_, token) = await _factory.CreateUserAsync();
+        var client = _factory.CreateClientFor(token);
+
+        var symbol = await SeedHourlyCandlesAsync(RangeStart, hours: 48);
+        var accountId = await CreateAccountAsync(client);
+
+        var response = await client.PostAsJsonAsync("/api/backtests", new
+        {
+            backtestAccountId = accountId,
+            from = RunFrom.ToString("O", CultureInfo.InvariantCulture),
+            to = RunTo.ToString("O", CultureInfo.InvariantCulture),
+            symbol,
+            source = "BinanceFutures",
+            interval = "OneHour",
+            allowGaps = false,
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(
+            "validation_failed",
+            (await ReadJsonAsync(response)).GetProperty("code").GetString());
+    }
+
+    /// The key parsed and was ignored before rule version 2, so honouring it on a version 1
+    /// document would hand the same bytes a new meaning under an unchanged hash.
+    [Fact]
+    public async Task AVersionOneDocumentCarryingAnIntervalIsRefusedAtSave()
+    {
+        var (_, token) = await _factory.CreateUserAsync();
+        var client = _factory.CreateClientFor(token);
+
+        var response = await SaveStrategyAsync(
+            client,
+            """{ "id": "htf", "type": "Ema", "interval": "FourHours", "params": { "period": 2 } }""",
+            version: 1);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     /// Every other 404 in the feature is a ProblemDetails; this one used to be a
@@ -117,8 +250,7 @@ public sealed class BacktestRunEndpointTests(PostgresFixture fixture) : IAsyncLi
         var strategyId = await CreateStrategyAsync(client);
 
         var queued = await QueueAsync(
-            client, accountId, symbol, RangeStart, RangeStart.AddHours(47),
-            allowGaps: false, strategyId: strategyId);
+            client, accountId, symbol, RunFrom, RunTo, allowGaps: false, strategyId);
 
         var runId = queued.GetProperty("id").GetGuid();
 
@@ -150,9 +282,10 @@ public sealed class BacktestRunEndpointTests(PostgresFixture fixture) : IAsyncLi
 
         var symbol = await SeedHourlyCandlesAsync(RangeStart, hours: 48);
         var accountId = await CreateAccountAsync(client);
+        var strategyId = await CreateStrategyAsync(client);
 
         var queued = await QueueAsync(
-            client, accountId, symbol, RangeStart, RangeStart.AddHours(47), allowGaps: true);
+            client, accountId, symbol, RunFrom, RunTo, allowGaps: true, strategyId);
 
         var runId = queued.GetProperty("id").GetGuid();
 
@@ -181,9 +314,10 @@ public sealed class BacktestRunEndpointTests(PostgresFixture fixture) : IAsyncLi
 
         var symbol = await SeedHourlyCandlesAsync(RangeStart, hours: 48);
         var accountId = await CreateAccountAsync(client);
+        var strategyId = await CreateStrategyAsync(client);
 
         var queued = await QueueAsync(
-            client, accountId, symbol, RangeStart, RangeStart.AddHours(47), allowGaps: true);
+            client, accountId, symbol, RunFrom, RunTo, allowGaps: true, strategyId);
 
         var runId = queued.GetProperty("id").GetGuid();
 
@@ -204,6 +338,43 @@ public sealed class BacktestRunEndpointTests(PostgresFixture fixture) : IAsyncLi
             $"/api/backtests/{runId}/trades/{Guid.CreateVersion7()}/executions");
 
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+    }
+
+    /// <summary>
+    /// The cycle reading crosses two boundaries the unit tests cannot see: a numeric(18,6)
+    /// column and the enum-to-text convention. Both silently degrade rather than fail — a
+    /// truncated ADX still looks like an ADX, and a mis-serialised interval still looks like
+    /// a string.
+    /// </summary>
+    [Fact]
+    public async Task APositionsCycleReadingSurvivesTheRoundTrip()
+    {
+        var (userId, token) = await _factory.CreateUserAsync();
+        var client = _factory.CreateClientFor(token);
+
+        var symbol = await SeedHourlyCandlesAsync(RangeStart, hours: 48);
+        var accountId = await CreateAccountAsync(client);
+        var strategyId = await CreateStrategyAsync(client);
+
+        var queued = await QueueAsync(
+            client, accountId, symbol, RunFrom, RunTo, allowGaps: true, strategyId);
+
+        var runId = queued.GetProperty("id").GetGuid();
+
+        await SeedTradesAsync(userId, runId, symbol, count: 1);
+
+        var trades = await ReadJsonAsync(await client.GetAsync($"/api/backtests/{runId}/trades"));
+        var row = trades.GetProperty("items")[0];
+        var tradeId = row.GetProperty("id").GetGuid();
+
+        Assert.Equal(SeededCycleAdx, row.GetProperty("cycleAdx").GetDecimal());
+        Assert.Equal("FourHours", row.GetProperty("cycleInterval").GetString());
+
+        var detail = await ReadJsonAsync(
+            await client.GetAsync($"/api/backtests/{runId}/trades/{tradeId}"));
+
+        Assert.Equal(SeededCycleAdx, detail.GetProperty("cycleAdx").GetDecimal());
+        Assert.Equal("FourHours", detail.GetProperty("cycleInterval").GetString());
     }
 
     // Guid.CreateVersion7 leads with a timestamp, so two ids minted in the same
@@ -282,6 +453,8 @@ public sealed class BacktestRunEndpointTests(PostgresFixture fixture) : IAsyncLi
                 PlannedReturnR = 2m,
                 ExitReason = BacktestExitReason.TakeProfit,
                 IntrabarResolution = IntrabarResolution.Unambiguous,
+                CycleAdx = SeededCycleAdx,
+                CycleInterval = CandleInterval.FourHours,
             });
 
             trade.RecordExecution(ExecutionRole.Open, 100m, 1m, 0.05m, RangeStart.AddHours(i), i);
@@ -311,18 +484,34 @@ public sealed class BacktestRunEndpointTests(PostgresFixture fixture) : IAsyncLi
         return (await ReadJsonAsync(response)).GetProperty("id").GetGuid();
     }
 
-    private static async Task<Guid> CreateStrategyAsync(HttpClient client)
+    private const string DefaultIndicator =
+        """{ "id": "emaFast", "type": "Ema", "source": "Close", "params": { "period": 9 } }""";
+
+    private static async Task<Guid> CreateStrategyAsync(
+        HttpClient client,
+        string indicator = DefaultIndicator,
+        int version = 1)
     {
-        const string rule = """
+        var response = await SaveStrategyAsync(client, indicator, version);
+
+        response.EnsureSuccessStatusCode();
+
+        return (await ReadJsonAsync(response)).GetProperty("id").GetGuid();
+    }
+
+    private static Task<HttpResponseMessage> SaveStrategyAsync(
+        HttpClient client,
+        string indicator,
+        int version)
+    {
+        var rule = $$"""
             {
-              "version": 1,
-              "indicators": [
-                { "id": "emaFast", "type": "Ema", "source": "Close", "params": { "period": 9 } }
-              ],
+              "version": {{version}},
+              "indicators": [ {{indicator}} ],
               "entry": {
                 "long": {
                   "op": "GreaterThan",
-                  "left": { "ref": "emaFast" },
+                  "left": { "price": "Close" },
                   "right": { "const": 1 }
                 }
               },
@@ -330,15 +519,11 @@ public sealed class BacktestRunEndpointTests(PostgresFixture fixture) : IAsyncLi
             }
             """;
 
-        var response = await client.PostAsJsonAsync("/api/backtests/strategies", new
+        return client.PostAsJsonAsync("/api/backtests/strategies", new
         {
             name = $"Strategy {Guid.CreateVersion7():N}"[..20],
             rule = JsonSerializer.Deserialize<JsonElement>(rule),
         });
-
-        response.EnsureSuccessStatusCode();
-
-        return (await ReadJsonAsync(response)).GetProperty("id").GetGuid();
     }
 
     private static object Request(
@@ -347,7 +532,7 @@ public sealed class BacktestRunEndpointTests(PostgresFixture fixture) : IAsyncLi
         DateTimeOffset from,
         DateTimeOffset to,
         bool allowGaps,
-        Guid? strategyId = null) => new
+        Guid strategyId) => new
         {
             backtestAccountId = accountId,
             backtestStrategyId = strategyId,
@@ -366,7 +551,7 @@ public sealed class BacktestRunEndpointTests(PostgresFixture fixture) : IAsyncLi
         DateTimeOffset from,
         DateTimeOffset to,
         bool allowGaps,
-        Guid? strategyId = null)
+        Guid strategyId)
     {
         var response = await client.PostAsJsonAsync(
             "/api/backtests", Request(accountId, symbol, from, to, allowGaps, strategyId));

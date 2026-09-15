@@ -44,7 +44,7 @@ public static class BacktestStrategyEndpoints
             {
                 var document = RuleDocumentParser.Parse(request.Rule.GetRawText());
 
-                return Results.Ok(RuleValidationResponse.Valid(document));
+                return Results.Ok(RuleValidationResponse.Valid(document, request.Interval));
             }
             catch (RuleValidationException ex)
             {
@@ -53,7 +53,7 @@ public static class BacktestStrategyEndpoints
         })
         .WithName("ValidateBacktestRule")
         .WithSummary("Check a rule tree without saving it")
-        .WithDescription("Returns the warmup bar count a valid rule needs, or the exact JSON path and reason it was rejected. The body is the same shape as POST /api/backtests/strategies, so a rule can be checked and then saved without reshaping it. Useful before committing to a strategy, because warmup silently extends how much history a run requires: a 200-period EMA on 4h candles needs 600 bars before the first signal can be evaluated.")
+        .WithDescription("Returns the warmup bar count a valid rule needs, or the exact JSON path and reason it was rejected. The body is the same shape as POST /api/backtests/strategies, so a rule can be checked and then saved without reshaping it. Useful before committing to a strategy, because warmup silently extends how much history a run requires: a 200-period EMA on 4h candles needs 600 bars before the first signal can be evaluated. Pass the optional interval to have that count expressed in the bars a run would actually load; without it, a strategy whose indicators read a higher timeframe reports a null warmup rather than a number that would understate it by the interval ratio.")
         .Produces<RuleValidationResponse>();
 
         group.MapGet("/indicators", () => Results.Ok(
@@ -65,7 +65,8 @@ public static class BacktestStrategyEndpoints
                     d.TakesSource,
                     d.WarmupMultiplier,
                     IndicatorFactory.MinPeriod,
-                    IndicatorFactory.MaxPeriod))
+                    IndicatorFactory.MaxPeriod,
+                    d.DefaultSource.ToString()))
                 .OrderBy(d => d.Type)
                 .ToList()))
         .WithName("ListSupportedIndicators")

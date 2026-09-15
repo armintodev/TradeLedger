@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using TradeLedger.Api.Shared;
 using TradeLedger.Core.Analytics;
 using TradeLedger.Core.Backtesting;
+using TradeLedger.Core.Backtesting.Rules;
 using TradeLedger.Core.Domain;
 using TradeLedger.Core.Domain.Backtesting;
 using TradeLedger.Core.Domain.MarketData;
@@ -358,6 +359,23 @@ public static class BacktestRunEndpoints
         // a run over complete data reads as gapped for the rest of its life.
         var foundGaps = false;
 
+        // Loaded before the coverage check rather than after it: the window that check has to
+        // span, and the set of timeframes this run must be able to build, are both properties
+        // of the rule document.
+        BacktestStrategy? strategy = null;
+
+        if (request.BacktestStrategyId is { } requestedStrategyId)
+        {
+            strategy = await db.BacktestStrategies
+                .AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Id == requestedStrategyId, ct);
+
+            if (strategy is null)
+            {
+                throw new ResourceNotFoundException("Backtest strategy", requestedStrategyId);
+            }
+        }
+
         if (kind == BacktestKind.RuleEngine)
         {
             if (string.IsNullOrWhiteSpace(symbol))
@@ -367,8 +385,39 @@ public static class BacktestRunEndpoints
                     "A rule engine run needs the symbol it should trade.");
             }
 
+            if (strategy is null)
+            {
+                throw new DomainValidationException(
+                    "backtestStrategyId",
+                    "A rule engine run needs the strategy it should trade. Without one it would queue and then fail in the worker with nothing to show for it.");
+            }
+
+            var document = RuleDocumentParser.Parse(strategy.RuleJson);
+
+            foreach (var declared in document.IntervalsFor(interval))
+            {
+                if (!interval.DividesInto(declared))
+                {
+                    throw new DomainRuleException(
+                        "indicator_interval_incompatible",
+                        $"An indicator on this strategy reads {declared} candles, which cannot be built from the {interval} bars this run trades. An indicator's interval must be at or above the run's and a whole multiple of it. Raise the run's interval, or lower the indicator's.");
+                }
+            }
+
+            // Warmup candles feed every indicator that generates a signal, so the range that
+            // has to be complete starts before the run does.
+            var loadFrom = document.LoadFrom(interval, request.From);
+            var barsNeeded = (request.To - loadFrom).Ticks / interval.Duration().Ticks + 1;
+
+            if (barsNeeded > options.MaxBarsPerRun)
+            {
+                throw new DomainRuleException(
+                    "backtest_range_too_large",
+                    $"This run would load {barsNeeded:N0} {interval} bars, over the limit of {options.MaxBarsPerRun:N0}. Warmup is counted in the run's own bars, so a long period on a high timeframe multiplies quickly. Shorten the range, raise the run's interval, or lower the longest indicator period.");
+            }
+
             var gaps = await candles.FindGapsAsync(
-                source, symbol, interval, request.From, request.To, ct);
+                source, symbol, interval, loadFrom, request.To, ct);
 
             if (gaps.Count > 0)
             {
@@ -411,17 +460,8 @@ public static class BacktestRunEndpoints
             run.MarkDataQuality(DataQuality.Gapped);
         }
 
-        if (request.BacktestStrategyId is { } strategyId)
+        if (strategy is not null)
         {
-            var strategy = await db.BacktestStrategies
-                .AsNoTracking()
-                .FirstOrDefaultAsync(s => s.Id == strategyId, ct);
-
-            if (strategy is null)
-            {
-                throw new ResourceNotFoundException("Backtest strategy", strategyId);
-            }
-
             run.UseRules(strategy.RuleJson, strategy.RuleHash);
         }
 

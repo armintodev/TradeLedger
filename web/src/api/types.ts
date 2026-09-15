@@ -825,6 +825,8 @@ export interface IndicatorDescriptionResponse {
   warmupMultiplier: number;
   minPeriod: number;
   maxPeriod: number;
+  /** Per type, not globally Close: Highest reads highs and Lowest lows. */
+  defaultSource: 'Close' | 'Open' | 'High' | 'Low' | 'Volume';
 }
 
 // ------------------------------------------------- backtest runs
@@ -938,6 +940,14 @@ export interface BacktestTradeResponse {
   wasLiquidated: boolean;
   maeR: number | null;
   mfeR: number | null;
+  /**
+   * ADX at the bar whose close produced the entry signal — the market's trend strength when
+   * the decision was made. Null on runs queued before the engine measured it, and on a
+   * position opened before the reading was warm.
+   */
+  cycleAdx: number | null;
+  /** The interval `cycleAdx` was read on. Never read one without the other. */
+  cycleInterval: CandleInterval | null;
   sourceTradeId: Guid | null;
 }
 

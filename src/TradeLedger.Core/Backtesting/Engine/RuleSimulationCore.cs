@@ -61,17 +61,36 @@ public static class RuleSimulationCore
         List<string> warnings,
         CancellationToken ct = default)
     {
-        var series = new Dictionary<string, IndicatorSeries>(StringComparer.OrdinalIgnoreCase);
+        var interval = bars[0].Interval;
+        var (series, ratios, cycle) = BuildSeries(document, bars, interval, warnings);
+        var cycleInterval = CycleReference.IntervalFor(interval);
 
-        foreach (var spec in document.Indicators)
+        // Warmth is a property of the computed series, not of a bar count. A higher-timeframe
+        // indicator is warm only once enough of its own buckets have closed, and how many base
+        // bars that took depends on where the loaded range happened to start.
+        var warmIndex = FirstWarmIndex(series, bars.Count);
+
+        if (warmIndex >= bars.Count)
         {
-            series[spec.Id] = IndicatorFactory.Compute(spec.Type, spec.Period, spec.Source, bars);
+            warnings.Add(
+                "No indicator ever becomes warm over the loaded candles, so the run opened no "
+                + "positions. Backfill more history before the start date.");
+
+            startIndex = bars.Count;
+        }
+        else if (warmIndex > startIndex)
+        {
+            warnings.Add(
+                $"Indicators are not warm until {bars[warmIndex].OpenTime:yyyy-MM-dd HH:mm} UTC, so "
+                + $"the run begins there rather than at {parameters.From:yyyy-MM-dd HH:mm} UTC. "
+                + "Backfill earlier candles for a full result.");
+
+            startIndex = warmIndex;
         }
 
-        var window = new BarWindow(bars, series);
+        var window = new BarWindow(bars, series, ratios);
         var state = new SimulationState(parameters.OpeningBalance);
         var totalBars = bars.Count - startIndex;
-        var interval = bars[0].Interval;
 
         for (var i = startIndex; i < bars.Count; i++)
         {
@@ -92,7 +111,9 @@ public static class RuleSimulationCore
 
             if (state.Pending is { } pending && state.Open is null)
             {
-                TryOpenPosition(parameters, state, pending, bar, i, series, document);
+                TryOpenPosition(
+                    parameters, state, pending, bar, i, series, ratios, document,
+                    cycle, cycleInterval);
                 state.Pending = null;
             }
 
@@ -125,6 +146,122 @@ public static class RuleSimulationCore
         await progress.ReportAsync(totalBars, totalBars, ct).ConfigureAwait(false);
 
         return Build(parameters, state, warnings);
+    }
+
+    /// <summary>
+    /// The first bar at which every indicator has a value on every output, or the bar count
+    /// if one never does.
+    /// </summary>
+    private static int FirstWarmIndex(
+        IReadOnlyDictionary<string, IndicatorSeries> series,
+        int barCount)
+    {
+        var warm = 0;
+
+        foreach (var entry in series.Values)
+        {
+            var index = warm;
+
+            while (index < barCount && entry.Outputs.Any(o => entry.At(index, o) is null))
+            {
+                index++;
+            }
+
+            if (index >= barCount)
+            {
+                return barCount;
+            }
+
+            warm = index;
+        }
+
+        return warm;
+    }
+
+    /// <summary>
+    /// Computes every declared indicator against the bars it reads, and returns each one
+    /// indexed by the run's own bars. See SPEC.md section 6.8.
+    /// </summary>
+    /// <remarks>
+    /// The cycle reading comes back separately rather than as another entry in the dictionary.
+    /// That dictionary is what <see cref="BarWindow"/> resolves references against and what
+    /// <see cref="FirstWarmIndex"/> waits on, so an extra member would both give rules a
+    /// name they never declared and let an unwarm ADX push back the first tradeable bar of
+    /// every existing strategy.
+    /// </remarks>
+    private static (
+        Dictionary<string, IndicatorSeries> Series,
+        Dictionary<string, int> Ratios,
+        IndicatorSeries Cycle)
+        BuildSeries(
+            RuleDocument document,
+            IReadOnlyList<Candle> bars,
+            CandleInterval runInterval,
+            List<string> warnings)
+    {
+        var series = new Dictionary<string, IndicatorSeries>(StringComparer.OrdinalIgnoreCase);
+        var ratios = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        // Keyed by interval, not by indicator: two four-hour indicators share one aggregation.
+        var aggregated = new Dictionary<CandleInterval, IReadOnlyList<Candle>>();
+
+        foreach (var spec in document.Indicators)
+        {
+            var interval = RuleDocument.IntervalOf(spec, runInterval);
+
+            if (interval == runInterval)
+            {
+                series[spec.Id] = IndicatorFactory.Compute(spec.Type, spec.Period, spec.Source, bars);
+                ratios[spec.Id] = 1;
+                continue;
+            }
+
+            if (!aggregated.TryGetValue(interval, out var higher))
+            {
+                higher = CandleAggregator.Aggregate(bars, interval, warnings);
+                aggregated[interval] = higher;
+            }
+
+            var computed = IndicatorFactory.Compute(spec.Type, spec.Period, spec.Source, higher);
+
+            series[spec.Id] = IndicatorProjection.ProjectOntoBase(computed, higher, bars);
+            ratios[spec.Id] = interval.RatioTo(runInterval);
+        }
+
+        return (series, ratios, BuildCycleSeries(bars, runInterval, aggregated));
+    }
+
+    /// <summary>
+    /// The always-on market-cycle reading, sharing whatever aggregation the strategy's own
+    /// indicators already paid for.
+    /// </summary>
+    private static IndicatorSeries BuildCycleSeries(
+        IReadOnlyList<Candle> bars,
+        CandleInterval runInterval,
+        Dictionary<CandleInterval, IReadOnlyList<Candle>> aggregated)
+    {
+        var interval = CycleReference.IntervalFor(runInterval);
+
+        if (interval == runInterval)
+        {
+            return IndicatorFactory.Compute(
+                CycleReference.Indicator, CycleReference.Period, PriceSource.Close, bars);
+        }
+
+        if (!aggregated.TryGetValue(interval, out var higher))
+        {
+            // Warnings are discarded only on this branch: reaching it means no declared
+            // indicator reads this interval, so a thin-bucket note would be about a series
+            // the user never asked for. Where the aggregation is shared, the strategy's own
+            // pass has already reported it.
+            higher = CandleAggregator.Aggregate(bars, interval);
+            aggregated[interval] = higher;
+        }
+
+        var computed = IndicatorFactory.Compute(
+            CycleReference.Indicator, CycleReference.Period, PriceSource.Close, higher);
+
+        return IndicatorProjection.ProjectOntoBase(computed, higher, bars);
     }
 
     private static void EvaluateEntry(
@@ -162,11 +299,14 @@ public static class RuleSimulationCore
         Candle bar,
         int index,
         IReadOnlyDictionary<string, IndicatorSeries> series,
-        RuleDocument document)
+        IReadOnlyDictionary<string, int> ratios,
+        RuleDocument document,
+        IndicatorSeries cycle,
+        CandleInterval cycleInterval)
     {
         var side = pending.Side;
         var fill = parameters.Costs.EntryFillPrice(side, bar.Open);
-        var stop = ResolveStop(document.StopLoss, side, fill, pending.SignalBarIndex, series);
+        var stop = ResolveStop(document.StopLoss, side, fill, pending.SignalBarIndex, series, ratios);
 
         if (stop is not { } stopPrice
             || !PositionSizer.IsStopOnTheCorrectSide(side, fill, stopPrice))
@@ -212,7 +352,13 @@ public static class RuleSimulationCore
             size.RiskAmount,
             index,
             bar.OpenTime,
-            parameters.Costs.TakerFee(size.Notional));
+            parameters.Costs.TakerFee(size.Notional))
+        {
+            // Read at the signal bar, not at `index`. The fill happens on the next bar's open,
+            // but the market state that caused the entry is the one the condition saw.
+            CycleAdx = cycle.At(pending.SignalBarIndex),
+            CycleInterval = cycleInterval,
+        };
     }
 
     private static decimal? ResolveStop(
@@ -220,7 +366,8 @@ public static class RuleSimulationCore
         TradeSide side,
         decimal entryPrice,
         int signalBarIndex,
-        IReadOnlyDictionary<string, IndicatorSeries> series)
+        IReadOnlyDictionary<string, IndicatorSeries> series,
+        IReadOnlyDictionary<string, int> ratios)
     {
         switch (rule)
         {
@@ -236,7 +383,11 @@ public static class RuleSimulationCore
                         return null;
                     }
 
-                    var value = indicator.At(signalBarIndex - level.Offset, level.Output);
+                    // Scaled the same way the evaluator scales an operand offset. This path
+                    // reads the series directly rather than through the bar window, so
+                    // without this the two would disagree about what offset 1 means.
+                    var ratio = ratios.TryGetValue(level.Ref, out var scale) ? scale : 1;
+                    var value = indicator.At(signalBarIndex - level.Offset * ratio, level.Output);
 
                     if (value is not { } raw || raw <= 0)
                     {
@@ -350,6 +501,8 @@ public static class RuleSimulationCore
             PlannedReturnR = parameters.RiskRewardRatio,
             ExitReason = reason,
             IntrabarResolution = resolution,
+            CycleAdx = position.CycleAdx,
+            CycleInterval = position.CycleInterval,
         });
 
         trade.RecordExecution(
@@ -506,6 +659,11 @@ public static class RuleSimulationCore
         public int EntryBarIndex { get; } = entryBarIndex;
         public DateTimeOffset OpenedAt { get; } = openedAt;
         public decimal EntryFee { get; } = entryFee;
+
+        /// <summary>Trend strength when the signal fired, carried to the closed trade unchanged.</summary>
+        public decimal? CycleAdx { get; init; }
+
+        public CandleInterval? CycleInterval { get; init; }
 
         public decimal Funding { get; set; }
         public decimal MaxAdverse { get; set; }

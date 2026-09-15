@@ -101,6 +101,8 @@ public sealed record BacktestTradeResponse(
     bool WasLiquidated,
     decimal? MaeR,
     decimal? MfeR,
+    decimal? CycleAdx,
+    CandleInterval? CycleInterval,
     Guid? SourceTradeId)
 {
     public static BacktestTradeResponse From(BacktestTrade t) => new(
@@ -110,7 +112,7 @@ public sealed record BacktestTradeResponse(
         t.GrossProfitLoss, t.Fees, t.Funding, t.NetProfitLoss,
         t.AchievedReturnR, t.PlannedReturnR, t.TradeGainPercent, t.BalanceAfter,
         t.Duration, t.Outcome, t.ExitReason, t.IntrabarResolution, t.WasLiquidated,
-        t.MaeR, t.MfeR, t.SourceTradeId);
+        t.MaeR, t.MfeR, t.CycleAdx, t.CycleInterval, t.SourceTradeId);
 }
 
 
@@ -155,6 +157,8 @@ public sealed record BacktestTradeDetailResponse(
     bool WasLiquidated,
     decimal? MaeR,
     decimal? MfeR,
+    decimal? CycleAdx,
+    CandleInterval? CycleInterval,
     Guid? SourceTradeId,
     string? Notes,
     IReadOnlyList<BacktestExecutionResponse> Executions)
@@ -167,7 +171,7 @@ public sealed record BacktestTradeDetailResponse(
         t.GrossProfitLoss, t.Fees, t.Funding, t.NetProfitLoss,
         t.AchievedReturnR, t.PlannedReturnR, t.TradeGainPercent, t.BalanceAfter,
         t.Duration, t.Outcome, t.ExitReason, t.IntrabarResolution, t.ExitWasAssumed,
-        t.WasLiquidated, t.MaeR, t.MfeR, t.SourceTradeId, t.Notes,
+        t.WasLiquidated, t.MaeR, t.MfeR, t.CycleAdx, t.CycleInterval, t.SourceTradeId, t.Notes,
         [.. t.Executions
             .OrderBy(e => e.ExecutedAt)
             .ThenBy(e => e.BarIndex)

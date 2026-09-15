@@ -3,7 +3,13 @@ import { Button, Card, Group, Pagination, Stack, Table, Text, Title } from '@man
 import { IconArrowRight } from '@tabler/icons-react';
 import { useNavigate } from 'react-router';
 import { TRADES_PAGE_SIZE, useBacktestRunTrades } from '@/api/queries/backtests';
-import { ExitReasonBadge, OutcomeBadge, ResolutionBadge, SideBadge } from '@/components/Badges';
+import {
+  CycleBadge,
+  ExitReasonBadge,
+  OutcomeBadge,
+  ResolutionBadge,
+  SideBadge,
+} from '@/components/Badges';
 import { Duration } from '@/components/Duration';
 import { Instant } from '@/components/Instant';
 import { Money, Pnl, Price, Quantity, RMultiple } from '@/components/Money';
@@ -74,6 +80,7 @@ export function RunTradesTable({ runId }: { runId: string }) {
                   <Table.Th>Opened</Table.Th>
                   <Table.Th>Closed</Table.Th>
                   <Table.Th>Side</Table.Th>
+                  <Table.Th>Cycle</Table.Th>
                   <Table.Th ta="right">Entry</Table.Th>
                   <Table.Th ta="right">Exit</Table.Th>
                   <Table.Th ta="right">Qty</Table.Th>
@@ -106,6 +113,9 @@ export function RunTradesTable({ runId }: { runId: string }) {
                     </Table.Td>
                     <Table.Td>
                       <SideBadge side={trade.side} />
+                    </Table.Td>
+                    <Table.Td>
+                      <CycleBadge adx={trade.cycleAdx} interval={trade.cycleInterval} />
                     </Table.Td>
                     <Table.Td ta="right">
                       <Price value={trade.entryPrice} />

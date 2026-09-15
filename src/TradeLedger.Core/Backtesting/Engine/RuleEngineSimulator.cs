@@ -33,16 +33,26 @@ public sealed class RuleEngineSimulator(
         }
 
         var document = RuleDocumentParser.Parse(run.RuleJson);
-        var warmupBars = document.WarmupBars;
+
+        // Queue time rejects this already; re-checked because a queued run executes later,
+        // in another process, against a document it only holds by value.
+        foreach (var declared in document.IntervalsFor(interval))
+        {
+            if (!interval.DividesInto(declared))
+            {
+                throw new InvalidOperationException(
+                    $"An indicator reads {declared} candles, which cannot be built from this run's " +
+                    $"{interval} bars. An indicator interval must be at or above the run's, and a " +
+                    "whole multiple of it.");
+            }
+        }
+
+        // An instant rather than a bar count: each indicator's warmup is floored onto its own
+        // grid, and the earliest result is the one that satisfies all of them. See SPEC 6.8.4.
+        var loadFrom = document.LoadFrom(interval, run.From);
 
         var bars = await candles
-            .GetRangeAsync(
-                source,
-                run.Symbol,
-                interval,
-                run.From - interval.Duration() * warmupBars,
-                run.To,
-                ct)
+            .GetRangeAsync(source, run.Symbol, interval, loadFrom, run.To, ct)
             .ConfigureAwait(false);
 
         if (bars.Count == 0)
@@ -57,22 +67,6 @@ public sealed class RuleEngineSimulator(
         if (startIndex < 0)
         {
             throw new InvalidOperationException("No candles fall inside the requested range.");
-        }
-
-        if (startIndex < warmupBars)
-        {
-            warnings.Add(
-                $"Only {startIndex} bars of history were available before the start date but the " +
-                $"indicators need {warmupBars}, so the run begins once they are warm.");
-
-            startIndex = warmupBars;
-        }
-
-        if (startIndex >= bars.Count)
-        {
-            throw new InvalidOperationException(
-                $"The indicators need {warmupBars} bars of warmup and this range does not hold enough " +
-                "data. Backfill earlier candles, or start the run later.");
         }
 
         var funding = run.IncludeFunding

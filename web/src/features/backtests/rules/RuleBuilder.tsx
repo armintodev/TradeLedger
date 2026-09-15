@@ -1,10 +1,12 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Alert,
+  Box,
   Button,
   Card,
   Grid,
   Group,
+  Select,
   Stack,
   Switch,
   Tabs,
@@ -14,6 +16,7 @@ import {
 } from '@mantine/core';
 import { IconAlertTriangle, IconArrowBackUp, IconBraces, IconSitemap } from '@tabler/icons-react';
 import { useRuleValidation } from '@/api/queries/backtests';
+import { intervalOptions } from '@/lib/marketData';
 import { resolveServerPath } from '@/lib/rules/serialise';
 import { starterCondition } from '@/lib/rules/starter';
 import {
@@ -52,13 +55,23 @@ export interface RuleBuilderProps {
 export function RuleBuilder({ editor, serverErrors, interval }: RuleBuilderProps) {
   const { draft, apply, firstRef } = editor;
 
+  // Client-only, never serialised. A strategy is written without knowing what interval it
+  // will be run at, but warmup and timeframe compatibility mean nothing until one is
+  // assumed, so the builder asks for one and keeps it out of the document.
+  const [previewOverride, setPreviewOverride] = useState<CandleInterval | null>(null);
+  const previewInterval = previewOverride ?? interval ?? 'FourHours';
+
   const localErrors = editor.diagnostics.filter((d) => d.severity === 'error');
   const diagnosticsByNode = useMemo(() => byNode(editor.diagnostics), [editor.diagnostics]);
   const docErrors = documentDiagnostics(editor.diagnostics);
 
   // Only ask the server once the document is structurally sound — a round trip
   // to be told what is already marked in the tree teaches nothing.
-  const validation = useRuleValidation(editor.documentText, localErrors.length === 0);
+  const validation = useRuleValidation(
+    editor.documentText,
+    localErrors.length === 0,
+    previewInterval,
+  );
 
   /**
    * Save-time errors arrive keyed by JSON path, which `applyServerErrors`
@@ -125,7 +138,26 @@ export function RuleBuilder({ editor, serverErrors, interval }: RuleBuilderProps
 
   return (
     <Stack gap="md">
-      <RuleValidationBar localErrors={localErrors} validation={validation} interval={interval} />
+      <Group justify="space-between" align="flex-end" wrap="wrap" gap="sm">
+        <Box style={{ flex: '1 1 320px' }}>
+          <RuleValidationBar
+            localErrors={localErrors}
+            validation={validation}
+            interval={previewInterval}
+          />
+        </Box>
+
+        <Select
+          size="xs"
+          label="Preview at"
+          description="Not part of the rule"
+          data={intervalOptions()}
+          value={previewInterval}
+          onChange={(value) => setPreviewOverride((value as CandleInterval) ?? null)}
+          allowDeselect={false}
+          w={150}
+        />
+      </Group>
 
       {unresolved.length > 0 && (
         <Alert color="red" variant="light" icon={<IconAlertTriangle size={18} />}>
@@ -179,6 +211,7 @@ export function RuleBuilder({ editor, serverErrors, interval }: RuleBuilderProps
               indicators={draft.indicators}
               diagnostics={diagnosticsByNode}
               serverErrors={resolved}
+              previewInterval={previewInterval}
               onChange={setIndicators}
             />
 

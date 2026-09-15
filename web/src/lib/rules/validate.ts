@@ -1,4 +1,5 @@
 import { depthOf } from './tree';
+import { isTradeable } from '../marketData';
 import {
   INDICATOR_META,
   LIMITS,
@@ -87,6 +88,18 @@ export function validateDraft(draft: RuleDraft): Diagnostic[] {
         nodeId: indicator.id,
         field: 'source',
         message: `${indicator.type} derives from the whole bar and takes no source.`,
+        severity: 'error',
+      });
+    }
+
+    // Whether the interval fits the run's own is deliberately not checked here: a
+    // strategy is authored without knowing what interval it will be run at. The queue
+    // refuses an incompatible pairing, and the builder warns against its preview.
+    if (indicator.interval && !isTradeable(indicator.interval)) {
+      diagnostics.push({
+        nodeId: indicator.id,
+        field: 'interval',
+        message: 'One-minute candles resolve intrabar fills and cannot be read by an indicator.',
         severity: 'error',
       });
     }

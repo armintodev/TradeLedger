@@ -7,6 +7,7 @@ import type {
   BacktestStrategyResponse,
   BacktestTradeDetailResponse,
   BacktestTradeResponse,
+  CandleInterval,
   CreateBacktestAccountRequest,
   EquityCurve,
   Guid,
@@ -305,13 +306,18 @@ export function useDeleteBacktestStrategy() {
  * text, not a mutation. Identical documents de-duplicate for free, which makes
  * undo back to a previously-checked shape instant.
  */
-export function useRuleValidation(json: string, enabled: boolean) {
+export function useRuleValidation(json: string, enabled: boolean, interval?: CandleInterval) {
   return useQuery({
-    queryKey: queryKeys.ruleValidation(json),
+    queryKey: queryKeys.ruleValidation(`${interval ?? ''}|${json}`),
     queryFn: () => {
       const rule: unknown = JSON.parse(json);
 
-      return api.post<RuleValidationResponse>('/api/backtests/strategies/validate', { rule });
+      // Without an interval the server reports a null warmup for a multi-timeframe
+      // document rather than a count that would understate it by the interval ratio.
+      return api.post<RuleValidationResponse>('/api/backtests/strategies/validate', {
+        rule,
+        interval,
+      });
     },
     enabled: enabled && json.length > 0,
     staleTime: Infinity,

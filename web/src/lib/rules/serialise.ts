@@ -1,10 +1,12 @@
 import {
   INDICATOR_META,
+  MULTI_TIMEFRAME_VERSION,
   RULE_VERSION,
   type ConditionDraft,
   type NodeId,
   type OperandDraft,
   type RuleDraft,
+  type RuleVersion,
 } from './types';
 
 /**
@@ -47,16 +49,21 @@ export function serialiseRule(draft: RuleDraft): SerialisedRule {
   const indicators = draft.indicators.map((indicator, index) => {
     record(`$.indicators[${index}]`, indicator.id);
 
-    const takesSource = INDICATOR_META[indicator.type]?.takesSource ?? false;
+    const meta = INDICATOR_META[indicator.type];
+    const takesSource = meta?.takesSource ?? false;
 
     return {
       id: indicator.ref,
       type: indicator.type,
       // Omitted at the default, and never emitted for an indicator that derives
-      // from the whole bar — the parser rejects it outright there.
-      ...(takesSource && indicator.source && indicator.source !== 'Close'
+      // from the whole bar — the parser rejects it outright there. The default is
+      // per type, so Highest omits `High` where Ema omits `Close`.
+      ...(takesSource && indicator.source && indicator.source !== meta?.defaultSource
         ? { source: indicator.source }
         : {}),
+      // Omitted when the indicator reads the run's own interval, which is what keeps
+      // an untouched single-timeframe document hashing exactly as it did before.
+      ...(indicator.interval ? { interval: indicator.interval } : {}),
       params: { period: indicator.period },
     };
   });
@@ -71,8 +78,14 @@ export function serialiseRule(draft: RuleDraft): SerialisedRule {
     entry.short = serialiseCondition(draft.entry.short, '$.entry.short', record);
   }
 
+  // Raised only by a document that actually needs it. Emitting 2 unconditionally would
+  // change the hash of every existing strategy the first time someone re-saved one.
+  const version: RuleVersion = draft.indicators.some((i) => i.interval)
+    ? MULTI_TIMEFRAME_VERSION
+    : RULE_VERSION;
+
   const document = {
-    version: RULE_VERSION,
+    version,
     indicators,
     entry,
     stopLoss: serialiseStop(draft),

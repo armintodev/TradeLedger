@@ -37,6 +37,11 @@ public sealed class BacktestTradeConfiguration : IEntityTypeConfiguration<Backte
         b.Property(t => t.MaeR).HasColumnType(Precision.Ratio);
         b.Property(t => t.MfeR).HasColumnType(Precision.Ratio);
 
+        // ADX is bounded 0-100, so Ratio is generous. It shares the column type with the R
+        // multiples rather than Money because it is a reading, not an amount.
+        // CycleInterval needs no configuration: the DbContext stores every enum as text.
+        b.Property(t => t.CycleAdx).HasColumnType(Precision.Ratio);
+
         b.HasOne(t => t.BacktestRun)
             .WithMany(r => r.Trades)
             .HasForeignKey(t => t.BacktestRunId)

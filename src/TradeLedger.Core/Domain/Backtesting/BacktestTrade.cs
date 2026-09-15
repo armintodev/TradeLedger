@@ -1,3 +1,5 @@
+using TradeLedger.Core.Domain.MarketData;
+
 namespace TradeLedger.Core.Domain.Backtesting;
 
 public sealed class BacktestTrade : IUserOwned
@@ -80,6 +82,10 @@ public sealed class BacktestTrade : IUserOwned
 
     public decimal? MfeR { get; private set; }
 
+    public decimal? CycleAdx { get; private set; }
+
+    public CandleInterval? CycleInterval { get; private set; }
+
     public Guid? SourceTradeId { get; private set; }
 
     public string? Notes { get; private set; }
@@ -125,6 +131,8 @@ public sealed class BacktestTrade : IUserOwned
             WasLiquidated = spec.ExitReason == BacktestExitReason.Liquidation,
             SourceTradeId = spec.SourceTradeId,
             Notes = spec.Notes,
+            CycleAdx = spec.CycleAdx,
+            CycleInterval = spec.CycleInterval,
             Outcome = net switch
             {
                 > 0 => TradeOutcome.Win,
@@ -228,4 +236,9 @@ public sealed record ClosedBacktestPosition
     public Guid? SourceTradeId { get; init; }
 
     public string? Notes { get; init; }
+
+    /// <summary>Trend strength at the signal bar. See <see cref="BacktestTrade.CycleAdx"/>.</summary>
+    public decimal? CycleAdx { get; init; }
+
+    public CandleInterval? CycleInterval { get; init; }
 }

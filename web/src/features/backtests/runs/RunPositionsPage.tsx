@@ -14,6 +14,7 @@ import { IconArrowLeft } from '@tabler/icons-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useBacktestRun, useBacktestRunTrades } from '@/api/queries/backtests';
 import {
+  CycleBadge,
   DataQualityBadge,
   ExitReasonBadge,
   OutcomeBadge,
@@ -165,6 +166,7 @@ export function RunPositionsPage() {
                   <Table.Th>Closed</Table.Th>
                   <Table.Th>Held</Table.Th>
                   <Table.Th>Side</Table.Th>
+                  <Table.Th>Cycle</Table.Th>
                   <Table.Th ta="right">Entry</Table.Th>
                   <Table.Th ta="right">Exit</Table.Th>
                   <Table.Th ta="right">Stop</Table.Th>
@@ -204,6 +206,9 @@ export function RunPositionsPage() {
                     </Table.Td>
                     <Table.Td>
                       <SideBadge side={trade.side} />
+                    </Table.Td>
+                    <Table.Td>
+                      <CycleBadge adx={trade.cycleAdx} interval={trade.cycleInterval} />
                     </Table.Td>
                     <Table.Td ta="right">
                       <Price value={trade.entryPrice} />

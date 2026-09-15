@@ -1,6 +1,27 @@
 # SPEC — Backtesting
 
-Status: **Approved for implementation.** Revision 2. Supersedes nothing; this is a new feature area.
+Status: **Approved for implementation.** Revision 4. Supersedes nothing; this is a new feature area.
+
+> **Revision 4** records, against every position a rule run opens, the market
+> cycle it was opened in — an ADX reading taken at the signal bar on a fixed
+> higher-timeframe reference. Sections touched: new §6.9, §8.3, §11, §12, §13.
+>
+> It answers the question Revision 3's filter could only act on: *which cycle was
+> this trade taken in?* The reading is stored as a raw number rather than a
+> classification, so the bands that turn it into LWC / MWC / HWC live in the
+> client and can be retuned without invalidating a single finished run.
+
+> **Revision 3** adds multi-timeframe indicators and the `Highest` / `Lowest`
+> extremes, and bumps the rule document to **version 2**. It changes two
+> decisions recorded in §0 — the fixed five-indicator list, and the implicit
+> assumption that every indicator reads the run's own interval. Sections
+> touched: §0, §5.2, §5.3, §5.6, §6.1, new §6.8, §11, §12, §13.
+>
+> The motivating failure: a strategy whose only entry condition was an indicator
+> state opened a long in a range, with a stop 1.5% away chosen by `Percent` and a
+> target at 2R, neither referencing where price actually was. MFE was +0.41R. An
+> indicator is a *confirmation*; the reason to enter is structural, and until now
+> the rule schema could not express one.
 
 This spec adds two engines to TradeLedger:
 
@@ -29,7 +50,8 @@ Settled with the owner. Do not re-litigate; ask before changing.
 | Metrics | **Reuse the existing metric definitions**, refactored so live and simulated trades are scored identically |
 | Kline egress | **The same per-user proxy as Bitunix** |
 | **Minimum timeframe** | **15 minutes.** Nothing below it is tradeable. See §4.1. |
-| **Indicators** | **`Sma`, `Ema`, `Rsi`, `Dmi`, `Adx`. Nothing else.** |
+| **Indicators** | **`Sma`, `Ema`, `Rsi`, `Dmi`, `Adx`, `Highest`, `Lowest`. Nothing else.** Revision 3 added the last two; adding another is still a spec change. |
+| **Multi-timeframe** | **An indicator may declare its own `interval`**, higher than the run's. Higher-timeframe candles are **aggregated from the run's own series**, never loaded separately. See §6.8. |
 | **Position risk** | **Static, from configuration, 1–5% per position.** Not computed per trade. |
 | **Exits** | **Stop-loss or take-profit only.** No discretionary exit, no signal exit, no time stop. |
 | **Risk / reward** | **Never below 2.** Take-profit is always an R multiple ≥ 2, default exactly 2. |
@@ -304,7 +326,7 @@ A backtest over gapped candles silently lies. Detection is mandatory and refusal
 
 `CandleRepository.FindGapsAsync(source, symbol, interval, from, to)` returns the missing `OpenTime` ranges by walking expected interval boundaries against what is stored.
 
-- `POST /api/backtests` validates coverage **before** queueing and returns `400` listing the gaps if any exist. Coverage is checked for the run interval **and** for the drill-down interval over the same span.
+- `POST /api/backtests` validates coverage **before** queueing and returns `400` listing the gaps if any exist. Coverage is checked for the run interval **and** for the drill-down interval, over `[loadFrom, To]` — the warmup window included, per §6.8.4, not just the run's own range.
 - The run re-checks at execution time, because data can be deleted between queueing and running.
 - `BacktestRun.AllowGaps` (default `false`) overrides this. When true, gaps are recorded on the run, surfaced in the result, and the result is stamped `DataQuality = Gapped`. A gapped result must be visibly marked everywhere it is displayed.
 - Missing **drill-down** candles are not a hard failure — they degrade resolution to the pessimistic assumption, which is recorded per trade (§6.3) and counted on the run.
@@ -366,11 +388,19 @@ public sealed class BacktestStrategy : IUserOwned
 
 ### 5.2 Rule document schema
 
-Version 1. A strategy is: a set of named indicators, an entry condition per side, and a stop-loss definition. **There is no sizing block and no take-profit block** — position size comes from configuration (§5.5) and the target is always R:R 2 (§5.4).
+**Version 2** as of Revision 3. A strategy is: a set of named indicators, an entry condition per side, and a stop-loss definition. **There is no sizing block and no take-profit block** — position size comes from configuration (§5.5) and the target is always R:R 2 (§5.4).
+
+Both versions parse. `version: 1` is accepted unchanged and must stay accepted —
+completed runs store their own frozen copy of `RuleJson`, and a v1 document that
+stopped parsing would make every historical result unexplainable. **`interval` is
+permitted only at version 2.** A v1 document carrying an `interval` key is
+rejected rather than silently reinterpreted: until Revision 3 the key parsed
+successfully and was *ignored*, so the same bytes would otherwise acquire new
+meaning under an identical `RuleHash`.
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "indicators": [
     { "id": "emaFast", "type": "Ema", "source": "Close", "params": { "period": 21 } },
     { "id": "emaSlow", "type": "Ema", "source": "Close", "params": { "period": 55 } },
@@ -404,13 +434,45 @@ Version 1. A strategy is: a set of named indicators, an entry condition per side
 }
 ```
 
+A second example — **Risky Breakout**, the shape Revision 3 exists to make
+expressible. A breakout trigger on the run's own interval, a cycle filter on a
+higher one, and a structural stop beneath the recent swing low rather than a
+fixed percentage:
+
+```json
+{
+  "version": 2,
+  "indicators": [
+    { "id": "swingHigh", "type": "Highest", "source": "High", "params": { "period": 20 } },
+    { "id": "swingLow",  "type": "Lowest",  "source": "Low",  "params": { "period": 20 } },
+    { "id": "adx4h",     "type": "Adx", "interval": "FourHours", "params": { "period": 14 } }
+  ],
+  "entry": {
+    "long": {
+      "op": "And",
+      "operands": [
+        { "op": "GreaterThan", "left": { "price": "Close" },
+                               "right": { "ref": "swingHigh", "offset": 1 } },
+        { "op": "Between", "left": { "ref": "adx4h" }, "low": { "const": 22 }, "high": { "const": 45 } }
+      ]
+    }
+  },
+  "stopLoss": { "kind": "IndicatorLevel", "ref": "swingLow", "bufferPercent": 0.2 }
+}
+```
+
+Note `"offset": 1` on `swingHigh`. The window is **inclusive of the current
+bar**, so at offset 0 the comparison `close > Highest(high, 20)` can essentially
+never fire — `close` is bounded by `high`. Offset 1 compares against the prior
+20 bars, which is what a breakout means.
+
 **Operands**
 
 | Form | Meaning |
 |---|---|
 | `{ "ref": "emaFast" }` | Current bar's value of that indicator |
 | `{ "ref": "dmi", "output": "PlusDi" }` | A named sub-output of a multi-output indicator |
-| `{ "ref": "emaFast", "offset": 1 }` | Value `offset` bars back. `offset` must be ≥ 0 and ≤ 500. |
+| `{ "ref": "emaFast", "offset": 1 }` | Value `offset` bars back, **counted in the referenced indicator's own bars** — for a `FourHours` indicator on a 15-minute run, `offset: 1` is the previous *4-hour* bar, not the previous 15-minute one. `offset` must be ≥ 0 and ≤ 500, counted in those same bars. |
 | `{ "price": "Close" }` | `Open` / `High` / `Low` / `Close` / `Volume`, `offset` allowed |
 | `{ "const": 70 }` | A `decimal` literal |
 
@@ -420,27 +482,30 @@ Version 1. A strategy is: a set of named indicators, an entry condition per side
 - Comparison: `GreaterThan`, `GreaterOrEqual`, `LessThan`, `LessOrEqual`, `EqualTo`, `NotEqualTo`
 - Cross: `CrossesAbove`, `CrossesBelow` — true when `left` was on the other side of `right` on the previous bar and is on this side now. Requires both operands to have a previous value; false on the first evaluable bar.
 - Range: `Between` (`left`, `low`, `high`, inclusive)
-- Trend: `RisingFor` (`operand`, `bars`), `FallingFor` (`operand`, `bars`) — strictly monotonic over that many bars
+- Trend: `RisingFor` (`operand`, `bars`), `FallingFor` (`operand`, `bars`) — strictly monotonic over that many bars, **in the referenced indicator's own bars** (§6.8)
 
 ### 5.3 Indicators
 
-**Exactly five: `Sma`, `Ema`, `Rsi`, `Dmi`, `Adx`.** No others are implemented, and adding one is a spec change, not a config change.
+**Exactly seven: `Sma`, `Ema`, `Rsi`, `Dmi`, `Adx`, `Highest`, `Lowest`.** No others are implemented, and adding one is a spec change, not a config change.
 
-| Type | Params | Outputs | Warmup bars |
-|---|---|---|---|
-| `Sma` | `period`, `source` | single | `period` |
-| `Ema` | `period`, `source` | single | `3 × period` |
-| `Rsi` | `period`, `source` | single | `5 × period` |
-| `Dmi` | `period` | `PlusDi`, `MinusDi` | `5 × period` |
-| `Adx` | `period` | single | `5 × period` |
+| Type | Params | Default `source` | Outputs | Warmup bars |
+|---|---|---|---|---|
+| `Sma` | `period`, `source` | `Close` | single | `period` |
+| `Ema` | `period`, `source` | `Close` | single | `3 × period` |
+| `Rsi` | `period`, `source` | `Close` | single | `5 × period` |
+| `Dmi` | `period` | — | `PlusDi`, `MinusDi` | `5 × period` |
+| `Adx` | `period` | — | single | `5 × period` |
+| `Highest` | `period`, `source` | **`High`** | single | `period` |
+| `Lowest` | `period`, `source` | **`Low`** | single | `period` |
 
-- `source` is `Open` / `High` / `Low` / `Close` / `Volume`, default `Close`. `Dmi` and `Adx` derive from the full OHLC bar and take no `source`.
-- All computed in **`decimal`**, per the project's prohibition on `double`/`float` for prices. This rules out `Skender.Stock.Indicators` and comparable libraries, which return `double` series — **implement these five in-house**. With only five indicators this is a contained amount of work.
+- `source` is `Open` / `High` / `Low` / `Close` / `Volume`. **The default is per type, not globally `Close`** — `Highest` defaults to `High` and `Lowest` to `Low`. A global `Close` default would make a bare `Highest` mean *highest close*, which is never the intent and is wrong for the swing-high stop that is the main reason these exist. `Dmi` and `Adx` derive from the full OHLC bar and take no `source`.
+- `Highest` and `Lowest` are the rolling extreme over the window **inclusive of the current bar**, consistent with every other indicator; `null` until `period - 1`. Exclude the current bar with `offset: 1` — see the breakout example in §5.2. Implement with a monotonic deque: O(n), not O(n × period), which matters at `MaxPeriod` 1000 and `MaxBarsPerRun` 2,000,000.
+- All computed in **`decimal`**, per the project's prohibition on `double`/`float` for prices. This rules out `Skender.Stock.Indicators` and comparable libraries, which return `double` series — **implement these in-house**. At seven indicators this is still a contained amount of work.
 - `Rsi`, `Dmi` and `Adx` use **Wilder's smoothing**, not a simple average. Their warmup is generous because Wilder recursion converges slowly; these figures are conservative by design.
 - `Dmi` and `Adx` both need True Range internally. Compute it as a shared private helper. **ATR is not exposed as a user-facing indicator** — nothing in the rule schema can reference it.
-- **No square root is required by any of the five.** The `DecimalMath.Sqrt` helper from the previous revision is no longer needed and must not be written.
+- **No square root is required by any of them.** The `DecimalMath.Sqrt` helper from an earlier revision is not needed and must not be written.
 - Each indicator gets a unit test against a published reference vector.
-- The engine does not evaluate entry conditions until every referenced indicator is warm. Warmup candles are fetched **before** the run's `From` date and excluded from results — a run from 1 January with a 55-period EMA on 4h candles silently needs 165 prior bars, and the coverage check must account for it.
+- The engine does not evaluate entry conditions until every referenced indicator is warm. Warmup candles are fetched **before** the run's `From` date and excluded from results — a run from 1 January with a 55-period EMA on 4h candles silently needs 165 prior bars, and the coverage check must account for it. **A higher-timeframe indicator multiplies that requirement by its interval ratio**, up to 672× for a weekly indicator on a 15-minute run; the warmup window is computed as a *time* per indicator rather than a bar count, per §6.8.
 
 ### 5.4 Exits — stop-loss and take-profit only
 
@@ -496,9 +561,39 @@ margin     = notional / leverage
 
 `RuleValidator` runs on every create/update and again before execution. Rejections return `400` with a field path and message.
 
-Checks: schema version supported; indicator ids unique and non-empty; every indicator `type` is one of the five; every `ref` resolves to a declared indicator; `output` valid for that type (`PlusDi`/`MinusDi` only on `Dmi`, and required there); `period` ≥ 1 and ≤ 1000; `offset` ≥ 0 and ≤ 500; `source` not supplied for `Dmi`/`Adx`; at least one of `entry.long` / `entry.short` present; every condition tree well-formed and no deeper than 20 levels; `stopLoss` present and its kind valid; `Percent` stop between 0.1 and 50; `IndicatorLevel` stop references a declared indicator.
+Checks: schema version within the supported range (1 or 2); indicator ids unique and non-empty; every indicator `type` is one of the seven; every `ref` resolves to a declared indicator; `output` valid for that type (`PlusDi`/`MinusDi` only on `Dmi`, and required there); `period` ≥ 1 and ≤ 1000; `offset` ≥ 0 and ≤ 500; `source` not supplied for `Dmi`/`Adx`; at least one of `entry.long` / `entry.short` present; every condition tree well-formed and no deeper than 20 levels; `stopLoss` present and its kind valid; `Percent` stop between 0.1 and 50; `IndicatorLevel` stop references a declared indicator.
+
+The `offset` bound is counted in the referenced indicator's own bars, not scaled: the
+ratio depends on the run's interval, which a strategy is authored without. An offset that
+reaches back past the loaded candles resolves to null and its condition fails, which is
+the same fail-closed outcome as an unwarmed indicator.
+
+Added at version 2: `interval` is a defined, **tradeable** `CandleInterval` (`OneMinute` is drill-down only) and is present only on a v2 document. Interval *compatibility* with the run — that it is at or above the run's interval and divides it evenly — cannot be checked here, because a strategy is authored without knowing what interval it will run at. That check happens at queue time (§9) with the code `indicator_interval_incompatible`.
+
+**The indicator object is whitelist-strict** over `{id, type, source, params, interval}`, matching the existing strictness inside `params`. `JsonElement.TryGetProperty` is case-sensitive, so a lenient object would let `"Interval"` or `"timeframe"` parse, be silently ignored, and produce a backtest that returns plausible and wrong numbers. For the highest-blast-radius key in the document that failure mode is unacceptable. Enum parsing uses `Enum.IsDefined` alongside `TryParse`, so `"interval": "99"` is a `RuleValidationException` with a path rather than an `ArgumentOutOfRangeException` escaping from `Duration()`.
 
 There are no cycles to detect — indicators reference candle data, never each other.
+
+### 5.7 Client serialisation rules — hash stability
+
+`RuleHash` is a structural hash of the document as submitted; the API never
+re-serialises. So any client that composes a document has to emit the **compact**
+form, and this is a backend-defined invariant rather than a client preference:
+
+- Omit a key at its default rather than emitting it. `"offset": 0`, a `source`
+  equal to the type's default, and a bare number in place of `{"const": n}` all
+  matter — an expanded form changes the hash that identifies which rule a
+  finished run executed.
+- **`interval` is omitted when the indicator runs at the run's own interval.**
+  Emitting `"interval": null` would change the hash of every existing document
+  the moment a user opened and re-saved it, bumping `Version` for no change.
+- Note the default-`source` rule now varies by type (§5.3). A client that hard-codes
+  "omit when `Close`" will emit a redundant `"source": "High"` on every `Highest`.
+
+The regression guard is a test asserting that a document with no intervals
+serialises byte-identically to the version 1 output. The rest of the rule
+builder's behaviour — where the timeframe control sits, what the warmup badge
+shows — is UI, and is not specified here.
 
 ---
 
@@ -511,6 +606,8 @@ There are no cycles to detect — indicators reference candle data, never each o
 A condition referencing bar *n* may use only data from bars ≤ *n*. The resulting order is placed at the open of bar *n+1*. Any implementation that fills at bar *n*'s close, or consults bar *n+1* while evaluating bar *n*, is wrong and makes every result worthless.
 
 This must be enforced structurally, not by care: the evaluator receives a bar-indexed view that **cannot** address beyond the current index. The test suite includes a strategy that is only profitable with lookahead, asserting it produces the honest result.
+
+A higher-timeframe indicator is the one place this rule is easy to violate without noticing, because a 4-hour bar is not finished for most of the 15-minute bars that compose it. **§6.8 is part of this rule, not an addendum to it.**
 
 ### 6.2 Simulation loop
 
@@ -599,6 +696,188 @@ A per-bar equity series would be millions of rows per run; per-trade points alon
 `MaxDrawdown` is computed by `EquityMath.Analyse` over the per-trade points, defined identically to the live one. `MaxIntrabarDrawdown` is reported alongside and is always ≥ it.
 
 Per trade, also record `MaeR` and `MfeR` — maximum adverse and favourable excursion in R multiples.
+
+### 6.8 Multi-timeframe indicators
+
+An indicator may declare an `interval` at or above the run's own. A 15-minute
+run can then gate entries on 4-hour ADX — the structure-on-the-low-timeframe,
+confirmation-on-the-high-timeframe shape that §5.2's second example shows.
+
+#### 6.8.1 The candles are aggregated, never loaded separately
+
+Higher-timeframe bars are built from the run's own candle series, not queried
+from storage. When the base series is complete the two are identical — and the
+queue already refuses a run whose data has holes. Aggregating means no second
+coverage check, no second backfill, and no new way for a run to be rejected.
+
+`CandleAggregator.Aggregate(source, target)` groups by
+`target.AlignFloor(c.OpenTime)`. Open is the first member's open, High the
+maximum, Low the minimum, Close the last member's close, Volume the sum.
+`QuoteVolume` and `TradeCount` are **null unless every member has one** —
+summing `decimal?` treats null as zero and would return a confidently wrong
+number rather than an honest unknown. Bars are built through `Candle.Of` so its
+OHLC guards still apply.
+
+An aggregated candle has `Id = 0` and is never persisted. It exists only to feed
+`IndicatorFactory.Compute`. It must not reach a tracked `DbContext`, where it
+would INSERT against the unique `(Source, Symbol, Interval, OpenTime)` index.
+
+**Which intervals pair.** The target must be at or above the base and divide it
+evenly: `target.Duration().Ticks % base.Duration().Ticks == 0`. Across the nine
+tradeable intervals the only failing pair is **base 4h with target 6h**.
+Divisibility is sufficient for grid alignment here only because every non-weekly
+interval is epoch-anchored and the weekly grid is a whole number of days from
+Monday midnight UTC — worth a comment at the helper, since it is not true in
+general.
+
+**Bucket completeness.** Classify by time bounds, not by member count:
+
+| Bucket | Action |
+|---|---|
+| Opens before the first loaded bar | **Drop.** Its `Open` is a mid-bucket price, and every Wilder-smoothed indicator would seed off that fabricated bar. |
+| Closes after the last loaded bar | **Drop.** Never visible under §6.8.2 anyway; the drop is the guard that keeps a future "current bucket so far" feature from becoming lookahead. |
+| Interior, short of members | **Aggregate from what exists, and warn on the run.** |
+
+That last row is the subtle one. *Dropping* an interior bucket removes an index,
+so `Ema`/`Rsi`/`Dmi`/`Adx` would treat buckets `b-1` and `b+1` as adjacent —
+the array stays contiguous in index while becoming discontiguous in time, and
+nothing downstream can detect it. One missing 15-minute bar would silently
+corrupt four hours of a 4-hour indicator and every Wilder value after it. A
+slightly-thin bucket is a small error; a deleted one is an undetectable one.
+
+#### 6.8.2 Projection — the series is expressed on base-bar indices
+
+The indicator is computed on the aggregated bars, then **projected back onto the
+base bar axis** as a `decimal?[]` the same length as the run's own bars.
+
+> For base bar `i`, the visible value is the one from the last HTF bucket whose
+> `CloseTime <= bars[i].CloseTime`. Equivalently: if `i` is the **last** base bar
+> of its bucket `b`, use bucket `b`; otherwise use bucket `b-1`. Null before the
+> first complete bucket closes.
+
+This is exactly "closed higher-timeframe bars only". At 17:45 on a 15-minute run
+the rule sees the 4-hour bar that closed at 16:00; at 19:45 — the final
+15-minute bar of the 16:00–20:00 bucket — it sees that bucket, which has just
+closed. No lookahead, and no added lag either, because the value flips on the
+*last* base bar of a bucket rather than the first.
+
+Projection is what keeps this change contained. Because the result is indexed
+like every other series, the bar-indexed evaluator view, the stop resolver, and
+`IndicatorSeries.At` are all unchanged, and funding accrual, intrabar
+resolution, the 1-minute drill-down and the close logic never see an aggregated
+candle at all.
+
+Aggregate **once per distinct interval**, not once per indicator, and
+short-circuit a ratio of 1 so a base-interval indicator does not rebuild two
+million candle objects for a no-op.
+
+#### 6.8.3 The projected series is a step function
+
+It changes only on the terminal base bar of each bucket. Two operator families
+silently break on that, and both must be fixed by the same mechanism:
+
+- **`offset`** would otherwise return the same value for 15 of every 16 bars on a
+  4-hour indicator in a 15-minute run. "The previous 4-hour value" would need
+  `offset: 16`, and at weekly-on-15-minute (ratio 672) offset 1 would be
+  inexpressible under the cap of 500.
+- **`RisingFor` / `FallingFor`** require strict monotonicity over *consecutive*
+  offsets. On a step function at most 1 in `ratio` consecutive offsets differ, so
+  these can never fire on a higher-timeframe indicator. They would fail silently
+  — no exception, just no trades.
+
+**Both are resolved by interpreting `offset` in the referenced indicator's own
+bars**, multiplying by the ratio at resolution time, and stepping the trend walk
+by the same ratio. This must be applied in the evaluator's operand lookup **and**
+in the stop-loss resolver, which reads the series directly rather than through
+the evaluator's view and would otherwise disagree with it about what `offset: 1`
+means. `CrossesAbove` / `CrossesBelow` are correct once offsets are scaled.
+
+#### 6.8.4 Warmup is a time, not a bar count
+
+The obvious formula — maximum over indicators of `warmup × ratio` base bars — is
+wrong twice. It is off by one bucket whenever the run's `From` is not aligned to
+the indicator's interval, because the partial leading bucket is dropped; and the
+maximum is an unsound reduction, because the single resulting `loadFrom` instant
+is set by whichever indicator wins, while alignment is a per-indicator property.
+`Ema(300)` at 15m alongside `Sma(5)` at 1d puts `loadFrom` 9d 9h before the
+range — off the daily grid even when `From` is midnight — and the daily
+indicator's margin is never applied because its term lost the maximum.
+
+Compute a time per indicator and take the earliest:
+
+```
+loadFrom = min over indicators of
+    interval_i.AlignFloor(run.From) - interval_i.Duration() × (warmupBars_i + 1)
+```
+
+Flooring on the left removes the alignment coupling and makes the `+1` a genuine
+margin rather than a patch.
+
+**`startIndex` comes from the data, not from arithmetic.** After projecting,
+advance it to the first index at which every indicator's projected series is
+non-null, and name that date in the run's warning. Jumping forward a fixed bar
+count says nothing about how many buckets have closed, and would leave the
+equity curve claiming a start date the simulation never traded.
+
+**The warmup window is gap-checked too.** Today the queue only inspects
+`[From, To]`, so the candles that seed every indicator are never checked at all.
+Extend it to `[loadFrom, To]`. This is a **behavioural change**: runs that queue
+cleanly today can begin to be refused with `candle_data_has_gaps` because their
+warmup range is thin. That is the correct refusal — warmup data feeds the
+indicators that generate every signal — and `allowGaps` remains the escape hatch.
+
+**Cap the load.** `Ema(1000)` at 1w on a 15-minute run is a ratio of 672 — some
+57 years of candles — and the range query has no row limit.
+`Backtest:MaxBarsPerRun` already exists in configuration but is enforced
+nowhere; multi-timeframe multiplies the warmup window by up to 672×, so enforce
+it at queue time against `(run.To - loadFrom) / baseDuration`.
+
+### 6.9 The market-cycle reading
+
+Every position a rule run opens records the market's trend strength at the bar
+that signalled it. This is observation, not control flow: nothing about it can
+change which trades a run takes.
+
+**What is measured.** `Adx(14)`, on the interval `CycleReference.IntervalFor`
+returns: four-hour bars wherever they divide out of the run's own candles, and
+the run's interval where they do not — 6h, 1d and 1w are not whole multiples of
+four hours, and aggregating to a grid *coarser* than the run trades on would be
+the more surprising answer. A cycle is a higher-timeframe property; a
+fifteen-minute ADX says nothing about where the wave is.
+
+**When it is read.** At the *signal* bar — `PendingEntry.SignalBarIndex` — not
+the bar the fill lands on. The fill happens at the next bar's open, so reading
+there would attribute a trade to the cycle it ran into rather than the one it
+was taken in. On a projected higher-timeframe series the two usually agree,
+which is exactly why the distinction has to be pinned by a test on a run whose
+reference interval equals its own.
+
+**Three containment rules**, each of which would otherwise change existing
+behaviour:
+
+| Rule | Why |
+|---|---|
+| The series never enters the indicator dictionary | That dictionary is what `BarWindow` resolves `ref` against. An entry there would give every document a name it never declared. |
+| It takes no part in `FirstWarmIndex` | ADX needs far more history than most rules. Counting it would push back the first tradeable bar of every existing strategy — silently, since the run still completes, just with fewer trades. |
+| It never extends `LoadFrom` | Warmup drives the gap check, so counting it could start refusing runs at queue time for the sake of a column nobody asked to filter on. |
+
+The consequence of the last two is that `CycleAdx` is **null on any position
+opened before ADX was warm**. That is the honest answer, and it is not the same
+as "ranging": an absent reading says nothing about the market. The UI renders it
+as an em dash rather than as a band.
+
+**Aggregation is shared.** When the strategy already declares an indicator on
+the reference interval, the cycle reading reuses the buckets that were built for
+it. Where it does not, the aggregation's thin-bucket warnings are discarded —
+they would be about a series the user never asked for, and the base series is
+gap-checked independently.
+
+**Bands are not stored.** `BacktestTrade` keeps `CycleAdx` and
+`CycleInterval`; the thresholds that turn 18.4 into *LWC* live in
+`web/src/lib/marketCycle.ts`. Where "ranging" ends is a judgement that moves as
+a trader's eye changes, and a band frozen into each row would make every
+finished run wrong the day one was retuned. Retuning the numbers relabels every
+run ever completed — no re-run, no migration.
 
 ---
 
@@ -775,9 +1054,16 @@ public enum DataQuality { Clean = 0, Gapped = 1 }
 
 Mirrors the mechanical half of `Trade` — deliberately **not** sharing the entity — plus engine-specific fields:
 
-`Id`, `UserId`, `BacktestRunId`, `Sequence`, `Symbol`, `Side`, `OpenedAt`, `ClosedAt`, `EntryBarIndex`, `ExitBarIndex`, `EntryPrice`, `ExitPrice`, `Quantity`, `Leverage`, `PositionMargin`, `OrderValue`, `StopLossPrice`, `TakeProfitPrice`, `LiquidationPrice`, `GrossProfitLoss`, `Fees`, `Funding`, `NetProfitLoss`, `AchievedReturnR`, `PlannedReturnR`, `TradeGainPercent`, `BalanceAfter`, `Duration`, `BarsInTrade`, `Outcome`, `ExitReason`, `IntrabarResolution`, `WasLiquidated`, `MaeR`, `MfeR`, `SourceTradeId` (what-if only — the real `Trade.Id` it derives from), `Notes`.
+`Id`, `UserId`, `BacktestRunId`, `Sequence`, `Symbol`, `Side`, `OpenedAt`, `ClosedAt`, `EntryBarIndex`, `ExitBarIndex`, `EntryPrice`, `ExitPrice`, `Quantity`, `Leverage`, `PositionMargin`, `OrderValue`, `StopLossPrice`, `TakeProfitPrice`, `LiquidationPrice`, `GrossProfitLoss`, `Fees`, `Funding`, `NetProfitLoss`, `AchievedReturnR`, `PlannedReturnR`, `TradeGainPercent`, `BalanceAfter`, `Duration`, `BarsInTrade`, `Outcome`, `ExitReason`, `IntrabarResolution`, `WasLiquidated`, `MaeR`, `MfeR`, `CycleAdx`, `CycleInterval`, `SourceTradeId` (what-if only — the real `Trade.Id` it derives from), `Notes`.
 
 `PlannedReturnR` is the run's `RiskRewardRatio` for every rule-engine trade, by construction.
+
+`CycleAdx` is `numeric(18,6)` and `CycleInterval` is the usual enum-as-text. They
+are a **pair**: 18 read on fifteen-minute bars and 18 read on four-hour bars
+describe different markets, so the interval is stored beside the value rather
+than derived from the run, where a later change to the reference rule would
+retroactively mislabel it. Both are null on every run completed before §6.9
+landed, and `CycleAdx` alone is null on a position opened before ADX was warm.
 
 ```csharp
 public enum BacktestExitReason
@@ -819,6 +1105,9 @@ Individual simulated fills: `Id`, `UserId`, `BacktestRunId`, `BacktestTradeId`, 
 Both kinds go through the same background queue. What-if runs without exit rules finish in well under a second, so the API returns `202` and the first status poll usually already has the result; that latency is accepted in exchange for one execution model rather than two.
 
 - `POST /api/backtests` validates, checks candle coverage for the run interval and the drill-down interval, checks sequential-overlap on the account, writes a `Queued` run, returns `202` with the id and a `Location` header.
+- **The strategy is loaded and its rule document parsed before the coverage check, not after.** Both the interval-compatibility check and the warmup window that coverage is measured over depend on the document, so the ordering is load-and-parse, then validate intervals, then compute `loadFrom`, then check gaps.
+- Interval compatibility (§6.8.1): every indicator's `interval` must be at or above the run's and divide it evenly, else `indicator_interval_incompatible` naming the indicator and both intervals. `Backtest:MaxBarsPerRun` is enforced here against `(To - loadFrom) / baseDuration`. A `RuleEngine` run with no `BacktestStrategyId` is rejected at this point rather than queueing and failing in the worker.
+- The engine re-checks interval compatibility defensively, since a queued run executes later in a separate process.
 - `BacktestWorker` polls for `Queued` runs on an interval (default 2s), oldest first.
 - It takes a Redis distributed lock per **account** id — not per run — using the existing `IDistributedLock`, so two runs on one sequential account cannot interleave and corrupt the balance chain.
 - Progress is written at most every 2 seconds or every 1000 bars, whichever is less frequent.
@@ -916,9 +1205,14 @@ Validated at startup, failing fast rather than clamping:
 
 **Unit**
 
-- Each of the five indicators against published reference vectors, in `decimal`. `Rsi`, `Dmi` and `Adx` specifically against Wilder-smoothed references, not simple-average ones — this is the most common way these three are implemented wrongly.
+- Each of the seven indicators against published reference vectors, in `decimal`. `Rsi`, `Dmi` and `Adx` specifically against Wilder-smoothed references, not simple-average ones — this is the most common way these three are implemented wrongly. `Highest`/`Lowest`: inclusive window, warmup nulls, and the monotonic deque checked against a naive O(n × period) implementation over random data.
 - Rule evaluator: each operator, `offset` handling, cross detection on the first evaluable bar, deep nesting, short-circuit behaviour, `Dmi` sub-output access.
-- `RuleValidator`: every rejection path returns the right field path, including an indicator type outside the five and a `source` supplied to `Dmi`.
+- `RuleValidator`: every rejection path returns the right field path, including an indicator type outside the seven, a `source` supplied to `Dmi`, an unknown key on the indicator object, a non-tradeable or undefined `interval`, and an `interval` on a v1 document.
+- **`CandleAggregator`**: sixteen 15-minute bars become one 4-hour bar with correct OHLCV; a partial leading and a partial trailing bucket are dropped; an interior short bucket is aggregated **and warned about**, not dropped; a null `QuoteVolume` on any member propagates as null rather than summing to a number; weekly aggregation lands on Monday midnight UTC.
+- **Interval pairing**: the full tradeable matrix, asserting base 4h with target 6h is the only refusal.
+- **Offset scaling**: `offset: 1` on a 4-hour indicator in a 15-minute run reads the previous *bucket*; the stop resolver and the evaluator agree on the value for the same operand. `RisingFor(3)` on a higher-timeframe indicator fires on genuinely rising buckets — the regression guard for §6.8.3.
+- **Warmup**: the `Ema(300)` at 15m plus `Sma(5)` at 1d case from §6.8.4 lands `loadFrom` on the daily grid; a `From` unaligned to the indicator's interval still yields a full bucket count.
+- **The cycle reading** (§6.9): the reference interval resolves to 4h for every run at or below it and to the run's own interval for 6h, 1d and 1w. The reading on each closed trade equals ADX at `EntryBarIndex - 1` — asserted on a run whose reference *is* its own interval, so the series moves every bar and a fill-bar read cannot pass; plus an assertion that some trade's two candidate bars actually differ, without which the first would hold either way. And the containment guard: a series far too short to warm ADX still opens positions, each carrying a null reading and a non-null interval.
 - `IntrabarResolver`: a bar containing only a stop; only a target; both, with 1m data; both, without; both inside a single minute. Assert the recorded `IntrabarResolution` in each case.
 - `LiquidationModel`: long and short, isolated, across leverage values.
 - `PositionSizer`: risk percent honoured exactly; target derived at exactly R:R; entry skipped on invalid stop; entry skipped on insufficient margin.
@@ -927,6 +1221,8 @@ Validated at startup, failing fast rather than clamping:
 - `PerformanceMetrics` and `EquityMath` golden tests.
 
 **The lookahead test.** A strategy formulated so it is profitable only if the engine peeks at the next bar. Assert the engine reports the honest result. This is the guard on the single most damaging class of bug in the feature.
+
+**The projection test**, its multi-timeframe counterpart. Given a higher-timeframe series whose values are simply their bucket ordinal, assert that every base bar inside bucket `b` reads `b-1` **except the last, which reads `b`**. That one assertion pins both halves of §6.8.2 — no lookahead, and no gratuitous lag either.
 
 **Integration** (Testcontainers Postgres, as the project already does)
 
@@ -939,7 +1235,12 @@ Validated at startup, failing fast rather than clamping:
 - Gap refusal: a range with a hole returns `400` and does not queue; with `AllowGaps` it runs and is stamped `Gapped`.
 - Missing drill-down data degrades resolution rather than failing the run.
 - Warmup: a 55-period EMA starting at the range boundary fetches prior candles and does not evaluate before warm.
-- `OneMinute` rejected as a run interval.
+- Multi-timeframe: an indicator below the run's interval, and the 4h-on-6h pair, are refused with `indicator_interval_incompatible`.
+- A gap inside the **warmup** window refuses the queue; `AllowGaps` lets it through and stamps the run `Gapped`.
+- A v1 document carrying `interval` is refused; a v1 document without one still runs, **including one replayed from a completed run's frozen `RuleJson`** — the guard on §5.2's version-range rule.
+- A 15-minute run with a 4-hour ADX filter opens strictly fewer trades than the same document without it.
+- The cycle reading survives Postgres and the wire: a six-decimal ADX comes back unrounded from both the trades list and the by-id detail, and the interval as its enum name. Both failure modes here are silent — a truncated reading still looks like a reading, and it only has to move 0.1 to cross a band.
+- `OneMinute` rejected as a run interval, and as an indicator `interval`.
 - Cancellation mid-run leaves `Cancelled` and no orphaned trades.
 - Tenancy: accounts, runs, trades and equity points are invisible to another user. Candles, being shared, are visible to both — assert that explicitly so the intent is recorded.
 - Candle upsert idempotency: fetching the same range twice writes once.
@@ -961,6 +1262,8 @@ Because what-if is no longer split, it inherits the market-data and intrabar dep
 | **2** | Backtest accounts, runs, storage, queue and worker lifecycle (§8, §9) + engine core: five indicators, intrabar resolver, liquidation, cost model, position sizer (§5.3, §6.3–6.5) | 0, 1 | **Done** |
 | **3** | Rule engine: rule document, validator, evaluator, simulator (§5, §6) | 2 | **Done** — validation lives inside `RuleDocumentParser` rather than a separate `RuleValidator`, so every rejection carries a JSON path; simulation core extracted as a pure class so the no-lookahead test needs no database |
 | **4** | What-if engine, complete: sizing, filters, costs, exit rules (§7) | 3 | **Deferred at the owner request.** The `WhatIf` kind is rejected at queue time with `engine_unavailable` (501) rather than creating a run that could never finish. |
+| **5** | **Multi-timeframe + `Highest`/`Lowest`** (§5.2, §5.3, §6.8): interval helpers and `CandleAggregator`, projection, the two indicators, rule document v2 and the strict indicator object, ratio-scaled offsets in both the evaluator and the stop resolver, time-based warmup, queue-time interval and load-size validation, and the rule builder's per-indicator timeframe control | 3 | **Done.** |
+| **6** | **The market-cycle reading** (§6.9, §8.3): `CycleReference`, the always-on ADX measured at the signal bar, two columns on `BacktestTrade`, both trade DTOs, and the client-side banding behind a `CycleBadge` in the trades table, the positions table and the position drawer | 5 | **Done.** |
 
 After Phase 3 the codebase was reworked against `docs/claude-fixes.md`: every entity encapsulated behind factories and behaviour methods, EF configurations split one per file, backtesting and market-data entities moved under `Core/Domain/`, request and response DTOs split out of the endpoint files, a `IUnitOfWork` wrapping multi-row writes in a transaction, structured `ProblemDetails` errors with stable codes, the Swagger bearer button fixed, `MarketSession` added as a derived domain concept, and the Postman collection brought up to 74 requests. See CLAUDE.md §6 for the rules that came out of it.
 
@@ -981,3 +1284,10 @@ Flagged rather than guessed.
 7. **Candle retention** has no policy. Growth is visible through `/api/market-data/coverage` and ranges can be deleted manually; revisit if it becomes a problem.
 8. **`docs/` needs a `market-data.md`** alongside `bitunix-api.md`, written during Phase 1, covering the Binance endpoints and the CSV format.
 9. **CLAUDE.md needs a backtesting section** once Phase 2 lands, covering the separate-entity rule, the no-lookahead rule, the fail-closed gap policy and the 15-minute floor.
+10. **Extending the gap check to the warmup window changes behaviour** (§6.8.4). Runs that queue cleanly today can start being refused because their warmup range is thin, and the refusal will look like a regression to anyone who does not know why. `AllowGaps` is the escape hatch. Decide whether existing saved run configurations need a one-off audit before this ships.
+11. **The frontend mirrors the indicator vocabulary by hand.** `INDICATOR_META` in `web/src/lib/rules/types.ts` duplicates `IndicatorFactory.Definitions` because client validation has to be synchronous, and `GET /api/backtests/strategies/indicators` — which exists and would serve the same data — currently has no consumer. Adding two indicators and a per-type default source means editing both. Worth deciding whether the endpoint should become the source of truth rather than adding a third divergence.
+12. **A `Risky Breakout` starter template** is not part of Phase 5. The rule document in §5.2 is the worked example; whether it ships in `starter.ts` is a separate call.
+13. **Structural stops need no new schema.** `IndicatorLevel` already resolves any declared indicator, so pointing it at `Lowest` works the moment Phase 5 lands. Whether the rule builder should surface that as its own affordance, rather than leaving `Percent` as the obvious default, is open — the motivating trade in Revision 3's note was stopped out by a percentage that had no relationship to structure.
+14. **Grouping results by cycle is not built.** §6.9 stores the reading per trade and the client bands it, which answers "which cycle was this opened in" one row at a time. "Net PnL by cycle" over a whole run — the breakdown that would actually settle the question the reading was added for — needs an analytics aggregate, and because the bands live in the client it needs a decision first about where they should live for a server-side `GROUP BY`.
+15. **The reference interval is fixed at four hours.** It is not configurable per run, and a strategy that reads 1d structure gets a 4h reading on a 15m run. Making it a run parameter is one nullable column and a select; it was left out because a fixed reference means two runs are always comparable, which is the property the reading exists to provide.
+16. **Existing runs show no cycle at all.** The columns are null for every run completed before §6.9, and there is no backfill — recomputing would mean re-reading the candles for each historical run. Re-queue a run to get readings on it.

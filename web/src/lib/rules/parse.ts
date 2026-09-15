@@ -1,8 +1,12 @@
 import { constOperand, indicatorOperand, newId, priceOperand } from './tree';
+import { ALL_INTERVALS } from '../marketData';
+import type { CandleInterval } from '@/api/types';
 import {
   FAMILY_OF,
   INDICATOR_META,
+  MULTI_TIMEFRAME_VERSION,
   PRICE_FIELDS,
+  RULE_VERSION,
   type ComparisonOp,
   type ConditionDraft,
   type IndicatorDraft,
@@ -38,7 +42,9 @@ export function parseRuleDocument(input: unknown): RuleDraft {
   const entryRoot = isRecord(root.entry) ? root.entry : {};
 
   return {
-    version: 1,
+    // Derived on the way out by the serialiser, from whether any indicator names an
+    // interval, so an incoming version number is never carried forward blindly.
+    version: indicators.some((i) => i.interval) ? MULTI_TIMEFRAME_VERSION : RULE_VERSION,
     indicators,
     entry: {
       long: parseCondition(entryRoot.long),
@@ -62,9 +68,18 @@ function parseIndicator(input: unknown): IndicatorDraft | null {
     type,
     // An indicator that takes no source must never carry one — the parser
     // rejects the document outright if it does.
-    source: INDICATOR_META[type].takesSource ? (asPriceField(input.source) ?? 'Close') : null,
+    source: INDICATOR_META[type].takesSource
+      ? (asPriceField(input.source) ?? INDICATOR_META[type].defaultSource)
+      : null,
     period: typeof params.period === 'number' ? params.period : null,
+    interval: asInterval(input.interval),
   };
+}
+
+function asInterval(value: unknown): CandleInterval | null {
+  return typeof value === 'string' && (ALL_INTERVALS as string[]).includes(value)
+    ? (value as CandleInterval)
+    : null;
 }
 
 function parseCondition(input: unknown): ConditionDraft | null {

@@ -14,13 +14,32 @@ public sealed class BarWindow
 {
     private readonly IReadOnlyList<Candle> _candles;
     private readonly IReadOnlyDictionary<string, IndicatorSeries> _indicators;
+    private readonly IReadOnlyDictionary<string, int>? _ratios;
 
-    public BarWindow(IReadOnlyList<Candle> candles, IReadOnlyDictionary<string, IndicatorSeries> indicators)
+    /// <param name="ratios">
+    /// Base bars per bar of each indicator's own timeframe, for those reading above the run's
+    /// interval. Absent or missing means one, which is every single-timeframe document.
+    /// </param>
+    public BarWindow(
+        IReadOnlyList<Candle> candles,
+        IReadOnlyDictionary<string, IndicatorSeries> indicators,
+        IReadOnlyDictionary<string, int>? ratios = null)
     {
         _candles = candles;
         _indicators = indicators;
+        _ratios = ratios;
         CurrentIndex = -1;
     }
+
+    /// <summary>
+    /// How many base bars one bar of this operand's own timeframe spans. One for prices and
+    /// constants, which are always read on the run's interval.
+    /// </summary>
+    public int RatioOf(RuleOperand operand) =>
+        operand is IndicatorOperand indicator ? RatioFor(indicator.Ref) : 1;
+
+    private int RatioFor(string reference) =>
+        _ratios is not null && _ratios.TryGetValue(reference, out var ratio) ? ratio : 1;
 
     public int CurrentIndex { get; private set; }
 
@@ -63,7 +82,11 @@ public sealed class BarWindow
 
             case IndicatorOperand indicator:
             {
-                var index = Resolve(indicator.Offset + extraOffset);
+                // The written offset counts in the indicator's own bars — offset 1 on a
+                // four-hour indicator means the previous four-hour bar, not the previous
+                // fifteen-minute one. extraOffset stays in base bars: it is how the cross
+                // operators look back one observation, and price is observed every bar.
+                var index = Resolve(indicator.Offset * RatioFor(indicator.Ref) + extraOffset);
 
                 if (index < 0)
                 {
@@ -205,10 +228,15 @@ public static class RuleEvaluator
 
     private static bool EvaluateTrend(TrendNode node, BarWindow window)
     {
+        // Step in the operand's own bars. A projected higher-timeframe series holds one value
+        // for every base bar of its bucket, so walking base bars would compare a value with
+        // itself and no monotonic run could ever be found.
+        var ratio = window.RatioOf(node.Operand);
+
         for (var step = 0; step < node.Bars; step++)
         {
-            var newer = window.Value(node.Operand, step);
-            var older = window.Value(node.Operand, step + 1);
+            var newer = window.Value(node.Operand, step * ratio);
+            var older = window.Value(node.Operand, (step + 1) * ratio);
 
             if (newer is null || older is null)
             {

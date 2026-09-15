@@ -13,12 +13,20 @@ import {
 } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { useBacktestRunTrade } from '@/api/queries/backtests';
-import { ExitReasonBadge, OutcomeBadge, ResolutionBadge, SideBadge } from '@/components/Badges';
+import {
+  CycleBadge,
+  ExitReasonBadge,
+  OutcomeBadge,
+  ResolutionBadge,
+  SideBadge,
+} from '@/components/Badges';
 import { Duration } from '@/components/Duration';
 import { Instant } from '@/components/Instant';
 import { Money, Pnl, Price, Quantity, RMultiple } from '@/components/Money';
 import { ErrorState } from '@/components/States';
 import { formatInteger, formatPercent } from '@/lib/format';
+import { CYCLE_BANDS } from '@/lib/marketCycle';
+import { INTERVAL_LABELS } from '@/lib/marketData';
 import type { BacktestTradeDetailResponse } from '@/api/types';
 
 interface PositionDetailDrawerProps {
@@ -117,6 +125,19 @@ function PositionBody({ trade }: { trade: BacktestTradeDetailResponse }) {
           value={`${formatInteger(trade.barsInTrade)} (#${formatInteger(
             trade.entryBarIndex,
           )} → #${formatInteger(trade.exitBarIndex)})`}
+        />
+      </Section>
+
+      <Section title="Market">
+        <Fact
+          label="Cycle"
+          hint="Which wave cycle the market was in at the bar whose close signalled this entry — not at the bar the fill landed on."
+          value={<CycleBadge adx={trade.cycleAdx} interval={trade.cycleInterval} />}
+        />
+        <Fact
+          label="ADX"
+          hint={`Trend strength. Under ${CYCLE_BANDS.medium} reads as a range, over ${CYCLE_BANDS.high} as a strong run.`}
+          value={readingOf(trade)}
         />
       </Section>
 
@@ -233,6 +254,20 @@ function PositionBody({ trade }: { trade: BacktestTradeDetailResponse }) {
       </Stack>
     </Stack>
   );
+}
+
+/**
+ * The raw reading behind the cycle badge, always with the timeframe it was taken on — the
+ * number alone would be read as whatever interval the run happened to trade.
+ */
+function readingOf(trade: BacktestTradeDetailResponse): string {
+  if (trade.cycleAdx === null) {
+    return '—';
+  }
+
+  const where = trade.cycleInterval ? ` on ${INTERVAL_LABELS[trade.cycleInterval]}` : '';
+
+  return `${trade.cycleAdx.toFixed(1)}${where}`;
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {

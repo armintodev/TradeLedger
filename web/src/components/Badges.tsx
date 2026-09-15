@@ -1,7 +1,9 @@
 import { Badge, Group, Tooltip } from '@mantine/core';
+import { CYCLE_COLORS, CYCLE_LABELS, cycleOf, describeCycle } from '@/lib/marketCycle';
 import type {
   BacktestExitReason,
   BacktestStatus,
+  CandleInterval,
   DataQuality,
   IntrabarResolution,
   MarketDataJobStatus,
@@ -244,6 +246,31 @@ export function ResolutionBadge({ resolution }: { resolution: IntrabarResolution
         size="sm"
       >
         {RESOLUTION_LABELS[resolution]}
+      </Badge>
+    </Tooltip>
+  );
+}
+
+/**
+ * Which market cycle a backtest position was opened in.
+ *
+ * Grey with an em dash means the engine has no reading — either the run predates the
+ * measurement, or ADX was not yet warm when the position opened. That is deliberately
+ * not the same as "ranging": an absent reading says nothing about the market.
+ */
+export function CycleBadge({
+  adx,
+  interval,
+}: {
+  adx: number | null;
+  interval: CandleInterval | null;
+}) {
+  const cycle = cycleOf(adx);
+
+  return (
+    <Tooltip label={describeCycle(adx, interval)} withArrow multiline w={280}>
+      <Badge color={cycle ? CYCLE_COLORS[cycle] : 'gray'} variant="light" size="sm">
+        {cycle ? CYCLE_LABELS[cycle] : '—'}
       </Badge>
     </Tooltip>
   );

@@ -7,7 +7,8 @@ public sealed record IndicatorDefinition(
     string Type,
     IReadOnlyList<string> Outputs,
     bool TakesSource,
-    int WarmupMultiplier);
+    int WarmupMultiplier,
+    PriceSource DefaultSource);
 
 public static class IndicatorFactory
 {
@@ -20,11 +21,17 @@ public static class IndicatorFactory
     private static readonly Dictionary<string, IndicatorDefinition> Definitions =
         new(StringComparer.OrdinalIgnoreCase)
         {
-            ["Sma"] = new("Sma", [IndicatorSeries.DefaultOutput], true, 1),
-            ["Ema"] = new("Ema", [IndicatorSeries.DefaultOutput], true, 3),
-            ["Rsi"] = new("Rsi", [IndicatorSeries.DefaultOutput], true, 5),
-            ["Dmi"] = new("Dmi", [PlusDi, MinusDi], false, 5),
-            ["Adx"] = new("Adx", [IndicatorSeries.DefaultOutput], false, 5),
+            ["Sma"] = new("Sma", [IndicatorSeries.DefaultOutput], true, 1, PriceSource.Close),
+            ["Ema"] = new("Ema", [IndicatorSeries.DefaultOutput], true, 3, PriceSource.Close),
+            ["Rsi"] = new("Rsi", [IndicatorSeries.DefaultOutput], true, 5, PriceSource.Close),
+            ["Dmi"] = new("Dmi", [PlusDi, MinusDi], false, 5, PriceSource.Close),
+            ["Adx"] = new("Adx", [IndicatorSeries.DefaultOutput], false, 5, PriceSource.Close),
+
+            // These two default to High and Low rather than Close. A bare "Highest" meaning
+            // the highest close is never what anyone wants, and it is wrong for the swing
+            // level that is the main reason to reach for them.
+            ["Highest"] = new("Highest", [IndicatorSeries.DefaultOutput], true, 1, PriceSource.High),
+            ["Lowest"] = new("Lowest", [IndicatorSeries.DefaultOutput], true, 1, PriceSource.Low),
         };
 
     public static IReadOnlyCollection<string> SupportedTypes => Definitions.Keys;
@@ -36,6 +43,15 @@ public static class IndicatorFactory
 
     public static bool TakesSource(string type) =>
         Definitions.TryGetValue(type, out var definition) && definition.TakesSource;
+
+    /// <summary>
+    /// The price an indicator reads when the document names none. Per type rather than
+    /// globally Close, so a bare Highest means the highest high.
+    /// </summary>
+    public static PriceSource DefaultSourceFor(string type) =>
+        Definitions.TryGetValue(type, out var definition)
+            ? definition.DefaultSource
+            : PriceSource.Close;
 
     public static IReadOnlyList<string> OutputsFor(string type) =>
         Definitions.TryGetValue(type, out var definition)
@@ -94,6 +110,8 @@ public static class IndicatorFactory
             "Rsi" => IndicatorSeries.Single(IndicatorMath.Rsi(source.Extract(candles), period)),
             "Adx" => IndicatorSeries.Single(IndicatorMath.Adx(candles, period)),
             "Dmi" => DmiSeries(candles, period),
+            "Highest" => IndicatorSeries.Single(IndicatorMath.Highest(source.Extract(candles), period)),
+            "Lowest" => IndicatorSeries.Single(IndicatorMath.Lowest(source.Extract(candles), period)),
             _ => throw new ArgumentException($"Unknown indicator type '{type}'.", nameof(type)),
         };
     }

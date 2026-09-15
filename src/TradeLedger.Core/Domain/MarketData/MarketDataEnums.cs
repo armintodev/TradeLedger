@@ -93,4 +93,39 @@ public static class CandleIntervals
 
     public static bool IsAligned(this CandleInterval interval, DateTimeOffset value) =>
         interval.AlignFloor(value) == value.ToUniversalTime();
+
+    /// <summary>
+    /// Whether <paramref name="target"/> can be aggregated from <paramref name="baseInterval"/>:
+    /// it must be at or above it, and a whole multiple of it. Across the tradeable
+    /// intervals the only pair this refuses is four hours into six.
+    /// </summary>
+    /// <remarks>
+    /// Duration divisibility guarantees the two grids nest only because every interval
+    /// below a week is floored against the Unix epoch, and the weekly grid runs from
+    /// Monday midnight UTC, which is a whole number of days. Neither holds for calendar
+    /// intervals, so do not extend this to months without revisiting the argument.
+    /// </remarks>
+    public static bool DividesInto(this CandleInterval baseInterval, CandleInterval target)
+    {
+        var baseTicks = baseInterval.Duration().Ticks;
+        var targetTicks = target.Duration().Ticks;
+
+        return targetTicks >= baseTicks && targetTicks % baseTicks == 0;
+    }
+
+    /// <summary>
+    /// How many <paramref name="baseInterval"/> bars make up one <paramref name="target"/> bar.
+    /// </summary>
+    public static int RatioTo(this CandleInterval target, CandleInterval baseInterval)
+    {
+        if (!baseInterval.DividesInto(target))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(target),
+                target,
+                $"{target} is not a whole multiple of {baseInterval}.");
+        }
+
+        return (int)(target.Duration().Ticks / baseInterval.Duration().Ticks);
+    }
 }

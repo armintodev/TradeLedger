@@ -2,6 +2,10 @@ import '@testing-library/jest-dom/vitest';
 import { afterAll, afterEach, beforeAll, vi } from 'vitest';
 import { server } from './msw/server';
 
+// jsdom has no layout, so it ships no scrollIntoView. Mantine's Combobox calls it when
+// it highlights an option, and the throw takes the whole dropdown down with it.
+Element.prototype.scrollIntoView = vi.fn();
+
 // jsdom implements neither, and Mantine reaches for both.
 Object.defineProperty(window, 'matchMedia', {
   writable: true,

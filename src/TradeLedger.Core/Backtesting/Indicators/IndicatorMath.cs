@@ -193,6 +193,60 @@ public static class IndicatorMath
         return result;
     }
 
+    public static decimal?[] Highest(decimal[] values, int period) =>
+        RollingExtreme(values, period, highest: true);
+
+    public static decimal?[] Lowest(decimal[] values, int period) =>
+        RollingExtreme(values, period, highest: false);
+
+    /// <summary>
+    /// The extreme of the trailing <paramref name="period"/> values, inclusive of the
+    /// current one, in O(n) rather than O(n * period).
+    /// </summary>
+    private static decimal?[] RollingExtreme(decimal[] values, int period, bool highest)
+    {
+        Guard(period);
+
+        var result = new decimal?[values.Length];
+
+        if (values.Length < period)
+        {
+            return result;
+        }
+
+        // Candidate indices, held so their values stay monotonic from the front. The front
+        // is the extreme of the current window; anything behind it that a newer value beats
+        // can never win again, so it is dropped on arrival rather than compared later.
+        var candidates = new int[values.Length];
+        var head = 0;
+        var tail = 0;
+
+        for (var i = 0; i < values.Length; i++)
+        {
+            if (tail > head && candidates[head] <= i - period)
+            {
+                head++;
+            }
+
+            while (tail > head
+                && (highest
+                    ? values[candidates[tail - 1]] <= values[i]
+                    : values[candidates[tail - 1]] >= values[i]))
+            {
+                tail--;
+            }
+
+            candidates[tail++] = i;
+
+            if (i >= period - 1)
+            {
+                result[i] = values[candidates[head]];
+            }
+        }
+
+        return result;
+    }
+
     private static void Assign(
         int index,
         decimal trSum,

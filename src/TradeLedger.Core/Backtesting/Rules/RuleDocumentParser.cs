@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using TradeLedger.Core.Backtesting.Indicators;
+using TradeLedger.Core.Domain.MarketData;
 
 namespace TradeLedger.Core.Backtesting.Rules;
 
@@ -59,14 +60,18 @@ public static class RuleDocumentParser
 
         var version = RequiredInt(root, "version", "$.version");
 
-        if (version != RuleDocument.SupportedVersion)
+        // A range, not an equality. Every completed run stores its own frozen copy of the
+        // document it executed, so a version that stopped parsing would make historical
+        // results unexplainable.
+        if (version < RuleDocument.MinVersion || version > RuleDocument.SupportedVersion)
         {
             throw new RuleValidationException(
                 "$.version",
-                $"Version {version} is not supported; this build understands version {RuleDocument.SupportedVersion}.");
+                $"Version {version} is not supported; this build understands versions "
+                + $"{RuleDocument.MinVersion} to {RuleDocument.SupportedVersion}.");
         }
 
-        var indicators = ParseIndicators(root);
+        var indicators = ParseIndicators(root, version);
         var declared = indicators.ToDictionary(i => i.Id, StringComparer.OrdinalIgnoreCase);
 
         if (!root.TryGetProperty("entry", out var entry) || entry.ValueKind != JsonValueKind.Object)
@@ -89,7 +94,16 @@ public static class RuleDocumentParser
         return new RuleDocument(version, indicators, new EntryRules(longRule, shortRule), stopLoss);
     }
 
-    private static List<IndicatorSpec> ParseIndicators(JsonElement root)
+    /// <summary>
+    /// The only properties an indicator object may carry, matched case-sensitively on
+    /// purpose. <c>TryGetProperty</c> is ordinal, so a tolerant object would let
+    /// <c>"Interval"</c> parse, be silently ignored, and produce a run that reads the wrong
+    /// timeframe while reporting entirely plausible numbers.
+    /// </summary>
+    private static readonly HashSet<string> IndicatorKeys =
+        new(StringComparer.Ordinal) { "id", "type", "source", "params", "interval" };
+
+    private static List<IndicatorSpec> ParseIndicators(JsonElement root, int version)
     {
         if (!root.TryGetProperty("indicators", out var array)
             || array.ValueKind != JsonValueKind.Array)
@@ -111,6 +125,17 @@ public static class RuleDocumentParser
                 throw new RuleValidationException(path, "Each indicator must be an object.");
             }
 
+            foreach (var property in element.EnumerateObject())
+            {
+                if (!IndicatorKeys.Contains(property.Name))
+                {
+                    throw new RuleValidationException(
+                        $"{path}.{property.Name}",
+                        $"Unknown indicator property '{property.Name}'. Supported: "
+                        + $"{string.Join(", ", IndicatorKeys)}.");
+                }
+            }
+
             var id = RequiredString(element, "id", $"{path}.id");
 
             if (!seen.Add(id))
@@ -128,7 +153,9 @@ public static class RuleDocumentParser
             }
 
             var takesSource = IndicatorFactory.TakesSource(type);
-            var source = PriceSource.Close;
+
+            // Per type, not globally Close: a bare Highest reads highs, a bare Lowest lows.
+            var source = IndicatorFactory.DefaultSourceFor(type);
 
             if (element.TryGetProperty("source", out var sourceElement)
                 && sourceElement.ValueKind != JsonValueKind.Null)
@@ -144,8 +171,9 @@ public static class RuleDocumentParser
             }
 
             var period = ParsePeriod(element, path);
+            var interval = ParseIndicatorInterval(element, path, version);
 
-            specs.Add(new IndicatorSpec(id, type, source, period));
+            specs.Add(new IndicatorSpec(id, type, source, period, interval));
         }
 
         if (specs.Count == 0)
@@ -155,6 +183,52 @@ public static class RuleDocumentParser
         }
 
         return specs;
+    }
+
+    private static CandleInterval? ParseIndicatorInterval(JsonElement element, string path, int version)
+    {
+        if (!element.TryGetProperty("interval", out var interval)
+            || interval.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        // Before version 2 this key parsed and was ignored. Honouring it on a version 1
+        // document would give the same bytes a new meaning under an unchanged hash, and
+        // every finished run that quotes those bytes would silently re-interpret.
+        if (version < RuleDocument.MultiTimeframeVersion)
+        {
+            throw new RuleValidationException(
+                $"{path}.interval",
+                $"An indicator interval requires rule version {RuleDocument.MultiTimeframeVersion}; "
+                + $"this document declares version {version}.");
+        }
+
+        if (interval.ValueKind != JsonValueKind.String)
+        {
+            throw new RuleValidationException($"{path}.interval", "An interval must be a string.");
+        }
+
+        var text = interval.GetString();
+
+        // IsDefined as well as TryGetValue: TryParse happily turns "99" into an undefined
+        // member, which would then throw out of Duration() with no path to point at.
+        if (!Enum.TryParse<CandleInterval>(text, ignoreCase: true, out var parsed)
+            || !Enum.IsDefined(parsed))
+        {
+            throw new RuleValidationException(
+                $"{path}.interval",
+                $"Unknown interval '{text}'. Supported: {string.Join(", ", CandleIntervals.Tradeable)}.");
+        }
+
+        if (!parsed.IsTradeable())
+        {
+            throw new RuleValidationException(
+                $"{path}.interval",
+                $"{parsed} is the drill-down interval and cannot be read by an indicator.");
+        }
+
+        return parsed;
     }
 
     private static int ParsePeriod(JsonElement element, string path)
@@ -487,6 +561,7 @@ public static class RuleDocumentParser
         var value = element.GetString();
 
         return Enum.TryParse<PriceSource>(value, ignoreCase: true, out var source)
+            && Enum.IsDefined(source)
             ? source
             : throw new RuleValidationException(
                 path,

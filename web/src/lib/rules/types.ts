@@ -14,12 +14,27 @@
  * `serialise.ts`.
  */
 
+import type { CandleInterval } from '@/api/types';
+
 /** Client-only, never serialised. Lets a card address itself without a path. */
 export type NodeId = string;
 
 export type PriceField = 'Close' | 'Open' | 'High' | 'Low' | 'Volume';
 
-export type IndicatorType = 'Sma' | 'Ema' | 'Rsi' | 'Dmi' | 'Adx';
+export type IndicatorType =
+  | 'Sma'
+  | 'Ema'
+  | 'Rsi'
+  | 'Dmi'
+  | 'Adx'
+  | 'Highest'
+  | 'Lowest';
+
+/**
+ * 1 is every document written before multi-timeframe; 2 is the first that may carry an
+ * indicator `interval`. A document with no intervals stays at 1 so its hash never moves.
+ */
+export type RuleVersion = 1 | 2;
 
 export type ComparisonOp =
   | 'GreaterThan'
@@ -66,6 +81,8 @@ export interface IndicatorDraft {
   /** Null for Dmi and Adx, which derive from the whole bar and take no source. */
   source: PriceField | null;
   period: number | null;
+  /** Null means the interval the run trades, which is what most indicators want. */
+  interval: CandleInterval | null;
 }
 
 export type StopLossDraft =
@@ -79,7 +96,7 @@ export type StopLossDraft =
     };
 
 export interface RuleDraft {
-  version: 1;
+  version: RuleVersion;
   indicators: IndicatorDraft[];
   /** At least one side must be present: a strategy that cannot enter is not one. */
   entry: { long: ConditionDraft | null; short: ConditionDraft | null };
@@ -136,13 +153,26 @@ export const PRICE_FIELDS: PriceField[] = ['Close', 'Open', 'High', 'Low', 'Volu
  */
 export const INDICATOR_META: Record<
   IndicatorType,
-  { outputs: string[]; takesSource: boolean; warmupMultiplier: number }
+  {
+    outputs: string[];
+    takesSource: boolean;
+    warmupMultiplier: number;
+    /** Per type, not globally Close: a bare Highest reads highs. */
+    defaultSource: PriceField;
+  }
 > = {
-  Sma: { outputs: ['Value'], takesSource: true, warmupMultiplier: 1 },
-  Ema: { outputs: ['Value'], takesSource: true, warmupMultiplier: 3 },
-  Rsi: { outputs: ['Value'], takesSource: true, warmupMultiplier: 5 },
-  Dmi: { outputs: ['PlusDi', 'MinusDi'], takesSource: false, warmupMultiplier: 5 },
-  Adx: { outputs: ['Value'], takesSource: false, warmupMultiplier: 5 },
+  Sma: { outputs: ['Value'], takesSource: true, warmupMultiplier: 1, defaultSource: 'Close' },
+  Ema: { outputs: ['Value'], takesSource: true, warmupMultiplier: 3, defaultSource: 'Close' },
+  Rsi: { outputs: ['Value'], takesSource: true, warmupMultiplier: 5, defaultSource: 'Close' },
+  Dmi: {
+    outputs: ['PlusDi', 'MinusDi'],
+    takesSource: false,
+    warmupMultiplier: 5,
+    defaultSource: 'Close',
+  },
+  Adx: { outputs: ['Value'], takesSource: false, warmupMultiplier: 5, defaultSource: 'Close' },
+  Highest: { outputs: ['Value'], takesSource: true, warmupMultiplier: 1, defaultSource: 'High' },
+  Lowest: { outputs: ['Value'], takesSource: true, warmupMultiplier: 1, defaultSource: 'Low' },
 };
 
 export const INDICATOR_TYPES = Object.keys(INDICATOR_META) as IndicatorType[];
@@ -162,4 +192,8 @@ export const LIMITS = {
   maxBufferPercent: 50,
 } as const;
 
+/** The baseline a document stays at while every indicator reads the run's own interval. */
 export const RULE_VERSION = 1;
+
+/** The version an indicator `interval` requires. */
+export const MULTI_TIMEFRAME_VERSION = 2;

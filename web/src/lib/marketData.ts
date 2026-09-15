@@ -62,6 +62,18 @@ export const TRADEABLE_INTERVALS: CandleInterval[] = ALL_INTERVALS.filter(
   (interval) => interval !== 'OneMinute',
 );
 
+/**
+ * How many `base` bars make up one `target` bar, or null when the two grids do not
+ * nest. Mirrors `CandleIntervals.RatioTo` — across the tradeable intervals the only
+ * pair that fails is four hours into six.
+ */
+export function intervalRatio(target: CandleInterval, base: CandleInterval): number | null {
+  const targetMs = INTERVAL_MS[target];
+  const baseMs = INTERVAL_MS[base];
+
+  return targetMs >= baseMs && targetMs % baseMs === 0 ? targetMs / baseMs : null;
+}
+
 export function isTradeable(interval: CandleInterval): boolean {
   return interval !== 'OneMinute';
 }

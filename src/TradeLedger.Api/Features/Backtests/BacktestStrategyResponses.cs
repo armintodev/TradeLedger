@@ -5,6 +5,7 @@ using TradeLedger.Core.Backtesting.Indicators;
 using TradeLedger.Core.Backtesting.Rules;
 using TradeLedger.Core.Domain;
 using TradeLedger.Core.Domain.Backtesting;
+using TradeLedger.Core.Domain.MarketData;
 using TradeLedger.Core.Persistence;
 
 namespace TradeLedger.Api.Features.Backtests;
@@ -18,14 +19,37 @@ public sealed record RuleValidationResponse(
     string? Path,
     string? Reason)
 {
-    public static RuleValidationResponse Valid(RuleDocument document) => new(
+    public static RuleValidationResponse Valid(RuleDocument document, CandleInterval? interval) => new(
         true,
-        document.WarmupBars,
-        [.. document.Indicators.Select(i => $"{i.Id} ({i.Type} {i.Period})")],
+        WarmupFor(document, interval),
+        [.. document.Indicators.Select(Describe)],
         document.Entry.Long is not null,
         document.Entry.Short is not null,
         null,
         null);
+
+    /// <summary>
+    /// Null rather than a number when the document reads a higher timeframe and the caller
+    /// did not say what it would run at. The unscaled count would under-report by as much as
+    /// the interval ratio, and this is the one endpoint whose job is to prevent that.
+    /// </summary>
+    private static int? WarmupFor(RuleDocument document, CandleInterval? interval)
+    {
+        if (interval is not { } runInterval)
+        {
+            return document.IsMultiTimeframe ? null : document.WarmupBars;
+        }
+
+        // An interval this document cannot be built from has no warmup answer. Report that
+        // as null rather than throwing: validation exists to explain, not to refuse.
+        return document.IntervalsFor(runInterval).All(declared => runInterval.DividesInto(declared))
+            ? document.WarmupBarsFor(runInterval)
+            : null;
+    }
+
+    private static string Describe(IndicatorSpec spec) => spec.Interval is { } interval
+        ? $"{spec.Id} ({spec.Type} {spec.Period} @ {interval})"
+        : $"{spec.Id} ({spec.Type} {spec.Period})";
 
     public static RuleValidationResponse Invalid(RuleValidationException ex) =>
         new(false, null, null, null, null, ex.Path, ex.Reason);
@@ -37,7 +61,8 @@ public sealed record IndicatorDescriptionResponse(
     bool TakesSource,
     int WarmupMultiplier,
     int MinPeriod,
-    int MaxPeriod);
+    int MaxPeriod,
+    string DefaultSource);
 
 public sealed record BacktestStrategyResponse(
     Guid Id,

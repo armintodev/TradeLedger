@@ -41,10 +41,20 @@ function draftWith(
   };
 }
 
+function indicator(
+  ref: string,
+  type: IndicatorDraft['type'],
+  source: IndicatorDraft['source'],
+  period: number,
+  interval: IndicatorDraft['interval'] = null,
+): IndicatorDraft {
+  return { id: newId(), ref, type, source, period, interval };
+}
+
 function defaultIndicators(): IndicatorDraft[] {
   return [
-    { id: newId(), ref: 'fast', type: 'Ema' as const, source: 'Close' as const, period: 20 },
-    { id: newId(), ref: 'slow', type: 'Ema' as const, source: 'Close' as const, period: 55 },
+    indicator('fast', 'Ema', 'Close', 20),
+    indicator('slow', 'Ema', 'Close', 55),
   ];
 }
 
@@ -80,7 +90,7 @@ describe('serialiseRule — the wire shape', () => {
 
   it('emits a non-default source', () => {
     const draft = draftWith(null, [
-      { id: newId(), ref: 'x', type: 'Ema', source: 'High', period: 10 },
+      { id: newId(), ref: 'x', type: 'Ema', source: 'High', period: 10, interval: null },
     ]);
 
     const indicators = (serialiseRule(draft).document as { indicators: Record<string, unknown>[] })
@@ -92,7 +102,7 @@ describe('serialiseRule — the wire shape', () => {
   it('never emits a source for an indicator that takes none', () => {
     const draft = draftWith(null, [
       // Dmi derives from the whole bar; a source here fails the whole document.
-      { id: newId(), ref: 'dmi', type: 'Dmi', source: 'Close', period: 14 },
+      { id: newId(), ref: 'dmi', type: 'Dmi', source: 'Close', period: 14, interval: null },
     ]);
 
     const indicators = (serialiseRule(draft).document as { indicators: Record<string, unknown>[] })
@@ -490,8 +500,8 @@ describe('validateDraft', () => {
 
   it('catches a duplicate indicator id, case-insensitively', () => {
     const draft = draftWith(newCondition('fast'), [
-      { id: 'a', ref: 'fast', type: 'Ema', source: 'Close', period: 20 },
-      { id: 'b', ref: 'FAST', type: 'Sma', source: 'Close', period: 50 },
+      { id: 'a', ref: 'fast', type: 'Ema', source: 'Close', period: 20, interval: null },
+      { id: 'b', ref: 'FAST', type: 'Sma', source: 'Close', period: 50, interval: null },
     ]);
 
     const diagnostics = byNode(validateDraft(draft)).get('b');
@@ -524,7 +534,9 @@ describe('validateDraft', () => {
       right: constOperand(25),
     };
 
-    const draft = draftWith(node, [{ id: 'a', ref: 'dmi', type: 'Dmi', source: null, period: 14 }]);
+    const draft = draftWith(node, [
+      { id: 'a', ref: 'dmi', type: 'Dmi', source: null, period: 14, interval: null },
+    ]);
 
     expect(byNode(validateDraft(draft)).get(operand.id)?.[0].message).toContain(
       'has several outputs',
@@ -533,7 +545,7 @@ describe('validateDraft', () => {
 
   it('rejects a source on an indicator that takes none', () => {
     const draft = draftWith(newCondition('adx'), [
-      { id: 'a', ref: 'adx', type: 'Adx', source: 'Close', period: 14 },
+      { id: 'a', ref: 'adx', type: 'Adx', source: 'Close', period: 14, interval: null },
     ]);
 
     expect(byNode(validateDraft(draft)).get('a')?.[0].message).toContain('takes no source');
@@ -544,7 +556,7 @@ describe('validateDraft', () => {
     [1001, 'period'],
   ])('rejects a period of %s', (period) => {
     const draft = draftWith(newCondition('fast'), [
-      { id: 'a', ref: 'fast', type: 'Ema', source: 'Close', period },
+      { id: 'a', ref: 'fast', type: 'Ema', source: 'Close', period, interval: null },
     ]);
 
     expect(

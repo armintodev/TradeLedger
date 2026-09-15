@@ -13,6 +13,8 @@ import {
 } from '@mantine/core';
 import { IconPlus, IconTrash } from '@tabler/icons-react';
 import { newId } from '@/lib/rules/tree';
+import { intervalOptions, intervalRatio, INTERVAL_LABELS } from '@/lib/marketData';
+import type { CandleInterval } from '@/api/types';
 import {
   INDICATOR_META,
   INDICATOR_TYPES,
@@ -29,18 +31,24 @@ export interface IndicatorListProps {
   indicators: IndicatorDraft[];
   diagnostics: Map<NodeId, Diagnostic[]>;
   serverErrors: Map<NodeId, string>;
+  /** The interval a run would trade. Only used to make the warmup badge truthful. */
+  previewInterval?: CandleInterval;
   onChange: (indicators: IndicatorDraft[]) => void;
 }
 
 /**
- * The five indicators the engine implements, in decimal arithmetic. A crossover
+ * The seven indicators the engine implements, in decimal arithmetic. A crossover
  * is two declarations plus a `CrossesAbove` condition — there is no combined
  * indicator, and `period` is the only parameter any of them takes.
+ *
+ * An indicator may name a timeframe above the one the run trades; leaving it at the
+ * run's interval is the common case and is what keeps a document at rule version 1.
  */
 export function IndicatorList({
   indicators,
   diagnostics,
   serverErrors,
+  previewInterval,
   onChange,
 }: IndicatorListProps) {
   function update(id: NodeId, patch: Partial<IndicatorDraft>) {
@@ -56,8 +64,15 @@ export function IndicatorList({
         // all — the parser rejects the document if it does.
         if (patch.type && !INDICATOR_META[patch.type].takesSource) {
           next.source = null;
-        } else if (patch.type && INDICATOR_META[patch.type].takesSource && !next.source) {
-          next.source = 'Close';
+        } else if (patch.type && INDICATOR_META[patch.type].takesSource) {
+          // Switching type re-seeds the source, so changing Ema to Highest reads highs
+          // rather than silently keeping Close and meaning the highest close.
+          const previous = indicator.type;
+          const reseed = !next.source || next.source === INDICATOR_META[previous].defaultSource;
+
+          if (reseed) {
+            next.source = INDICATOR_META[patch.type].defaultSource;
+          }
         }
 
         return next;
@@ -72,8 +87,9 @@ export function IndicatorList({
         id: newId(),
         ref: nextRef(indicators),
         type: 'Ema',
-        source: 'Close',
+        source: INDICATOR_META.Ema.defaultSource,
         period: 20,
+        interval: null,
       },
     ]);
   }
@@ -164,11 +180,20 @@ export function IndicatorList({
                 </Tooltip>
               )}
 
-              <Tooltip label={`Warmup: ${meta.warmupMultiplier}× the period`} withArrow>
-                <Badge variant="light" color="blue" mt={22}>
-                  {(indicator.period ?? 0) * meta.warmupMultiplier} bars
-                </Badge>
-              </Tooltip>
+              <Select
+                size="xs"
+                label="Timeframe"
+                data={[{ value: '', label: 'Run interval' }, ...intervalOptions()]}
+                value={indicator.interval ?? ''}
+                onChange={(value) =>
+                  update(indicator.id, { interval: (value || null) as CandleInterval | null })
+                }
+                error={errorFor('interval')}
+                allowDeselect={false}
+                w={120}
+              />
+
+              <WarmupBadge indicator={indicator} previewInterval={previewInterval} />
 
               <ActionIcon
                 variant="subtle"
@@ -184,6 +209,60 @@ export function IndicatorList({
         })}
       </Stack>
     </Card>
+  );
+}
+
+/**
+ * How much history one indicator needs. A higher timeframe multiplies it by the interval
+ * ratio, which is the part that catches people out: a four-hour ADX(14) on a fifteen-minute
+ * run wants 1,120 bars of warmup, not 70.
+ */
+function WarmupBadge({
+  indicator,
+  previewInterval,
+}: {
+  indicator: IndicatorDraft;
+  previewInterval?: CandleInterval;
+}) {
+  const meta = INDICATOR_META[indicator.type];
+  const own = (indicator.period ?? 0) * meta.warmupMultiplier;
+  const timeframe = indicator.interval;
+
+  if (!timeframe) {
+    return (
+      <Tooltip label={`Warmup: ${meta.warmupMultiplier}× the period`} withArrow>
+        <Badge variant="light" color="blue" mt={22}>
+          {own} bars
+        </Badge>
+      </Tooltip>
+    );
+  }
+
+  const ratio = previewInterval ? intervalRatio(timeframe, previewInterval) : null;
+
+  if (previewInterval && ratio === null) {
+    return (
+      <Tooltip
+        label={`${INTERVAL_LABELS[timeframe]} bars cannot be built from ${INTERVAL_LABELS[previewInterval]} ones, so a run at that interval would be refused.`}
+        withArrow
+      >
+        <Badge variant="light" color="red" mt={22}>
+          {INTERVAL_LABELS[timeframe]} unusable
+        </Badge>
+      </Tooltip>
+    );
+  }
+
+  const label = ratio
+    ? `${own} ${INTERVAL_LABELS[timeframe]} bars, which is ${(own * ratio).toLocaleString()} bars at the run interval`
+    : `Warmup: ${own} ${INTERVAL_LABELS[timeframe]} bars`;
+
+  return (
+    <Tooltip label={label} withArrow>
+      <Badge variant="light" color="grape" mt={22}>
+        {own} × {INTERVAL_LABELS[timeframe]}
+      </Badge>
+    </Tooltip>
   );
 }
 
